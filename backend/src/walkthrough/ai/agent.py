@@ -478,7 +478,7 @@ async def _handle_ask_user_question(
 async def _handle_generate_walkthrough(
     _tool_input: dict[str, Any], project: Project
 ) -> tuple[str, Project]:
-    from walkthrough.ai.tools.generate import generate_walkthrough  # type: ignore[import-not-found]
+    from walkthrough.ai.tools.generate import generate_walkthrough
 
     result = await generate_walkthrough(project)
     return json.dumps(result), project
