@@ -15,6 +15,7 @@ dependencies = [
     "google-cloud-storage>=2.18",
     "google-cloud-firestore>=2.19",
     "google-cloud-aiplatform>=1.74",
+    "google-cloud-documentai>=2.32",
     "anthropic>=0.42",
     "python-multipart>=0.0.17",
     "sse-starlette>=2.1",
