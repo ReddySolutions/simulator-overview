@@ -454,7 +454,7 @@ async def _handle_merge_paths(
 async def _handle_detect_contradictions(
     _tool_input: dict[str, Any], project: Project
 ) -> tuple[str, Project]:
-    from walkthrough.ai.tools.detect_contradictions import (  # type: ignore[import-not-found]
+    from walkthrough.ai.tools.detect_contradictions import (
         detect_contradictions,
     )
 
