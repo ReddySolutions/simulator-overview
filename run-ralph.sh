@@ -10,6 +10,17 @@ set -e
 
 export CLAUDE_CONFIG_DIR=/Users/gw/.claude-config-reddy
 
+RALPH_DIR="$HOME/.claude/skills/ralph"
+
+# Symlink prd.json and progress.txt into project dir so the agent
+# finds them in CWD. Ralph.sh also accesses them at RALPH_DIR, and
+# both paths resolve to the same file via symlink.
+for f in prd.json progress.txt; do
+  if [ ! -e "$f" ] && [ -f "$RALPH_DIR/$f" ]; then
+    ln -s "$RALPH_DIR/$f" "$f"
+  fi
+done
+
 MAX="${1:-35}"
 
-exec ~/.claude/skills/ralph/ralph.sh --tool claude "$MAX"
+exec "$RALPH_DIR/ralph.sh" --tool claude "$MAX"
