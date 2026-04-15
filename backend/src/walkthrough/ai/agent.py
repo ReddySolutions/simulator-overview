@@ -444,7 +444,7 @@ async def _handle_analyze_screenshot(
 async def _handle_merge_paths(
     _tool_input: dict[str, Any], project: Project
 ) -> tuple[str, Project]:
-    from walkthrough.ai.tools.merge_paths import merge_paths  # type: ignore[import-not-found]
+    from walkthrough.ai.tools.merge_paths import merge_paths
 
     result = await merge_paths(project.videos)
     project.decision_trees = result
