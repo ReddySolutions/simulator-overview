@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel
 
@@ -36,5 +36,6 @@ class Project(BaseModel):
     decision_trees: list[DecisionTree]
     gaps: list[Gap]
     questions: list[ClarificationQuestion]
+    walkthrough_output: dict[str, Any] | None = None
     created_at: datetime
     updated_at: datetime
