@@ -468,7 +468,7 @@ async def _handle_detect_contradictions(
 async def _handle_ask_user_question(
     _tool_input: dict[str, Any], project: Project
 ) -> tuple[str, Project]:
-    from walkthrough.ai.tools.clarification import generate_questions  # type: ignore[import-not-found]
+    from walkthrough.ai.tools.clarification import generate_questions
 
     result = await generate_questions(project.gaps)
     project.questions = result
