@@ -17,6 +17,10 @@ class GCSClient:
         self._bucket = self._client.bucket(bucket_name)
         self._settings = Settings()
 
+    @property
+    def bucket_name(self) -> str:
+        return str(self._bucket.name)
+
     async def upload_file(self, file: UploadFile, destination_path: str) -> str:
         content_type = file.content_type or ""
         if content_type not in ALLOWED_CONTENT_TYPES:
