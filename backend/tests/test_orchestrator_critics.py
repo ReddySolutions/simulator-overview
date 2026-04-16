@@ -1,4 +1,4 @@
-"""Tests for PhaseOrchestrator LLM-critic wiring (US-017)."""
+"""Tests for PhaseOrchestrator LLM-critic wiring (US-017, US-019)."""
 
 from __future__ import annotations
 
@@ -198,3 +198,101 @@ class TestFlagOn:
         await orch._run_contradictions(project)
 
         assert [g.gap_id for g in project.gaps] == ["gap_only_det"]
+
+
+class TestNarrativeCriticFlagOff:
+    async def test_gaps_unchanged_and_critic_not_called(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("QA_ENABLE_LLM_CRITIC", "false")
+
+        from walkthrough.ai.tools import narrative as narr_mod
+        from walkthrough.ai.tools import narrative_critic as narr_critic_mod
+
+        async def _synth_stub(videos, pdfs, trees):
+            return list(trees)
+
+        async def _critic_explode(*args, **kwargs):
+            raise AssertionError(
+                "critique_narratives must not run when flag is off"
+            )
+
+        monkeypatch.setattr(narr_mod, "synthesize_narrative", _synth_stub)
+        monkeypatch.setattr(
+            narr_critic_mod, "critique_narratives", _critic_explode
+        )
+
+        orch = PhaseOrchestrator()
+        project = _project("proj_narr_off")
+
+        await orch._run_narrative(project)
+
+        assert project.gaps == []
+
+
+class TestNarrativeCriticFlagOn:
+    @pytest.fixture(autouse=True)
+    def _enable(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("QA_ENABLE_LLM_CRITIC", "true")
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+
+    async def test_critic_gaps_appended_to_project_gaps(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from walkthrough.ai.tools import narrative as narr_mod
+        from walkthrough.ai.tools import narrative_critic as narr_critic_mod
+
+        critic_new = [_gap("gap_narr1"), _gap("gap_narr2")]
+
+        async def _synth_stub(videos, pdfs, trees):
+            return list(trees)
+
+        seen_trees: list[int] = []
+
+        async def _critic_stub(decision_trees, *, client=None):
+            seen_trees.append(len(decision_trees))
+            return list(critic_new)
+
+        monkeypatch.setattr(narr_mod, "synthesize_narrative", _synth_stub)
+        monkeypatch.setattr(
+            narr_critic_mod, "critique_narratives", _critic_stub
+        )
+
+        orch = PhaseOrchestrator()
+        project = _project("proj_narr_on")
+
+        await orch._run_narrative(project)
+
+        assert [g.gap_id for g in project.gaps] == ["gap_narr1", "gap_narr2"]
+        assert seen_trees == [0]
+
+    async def test_appends_without_overwriting_prior_gaps(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Prior gaps on project.gaps must survive; new critic gaps are
+        appended. Contradictions phase (not this one) handles any dedup."""
+        from walkthrough.ai.tools import narrative as narr_mod
+        from walkthrough.ai.tools import narrative_critic as narr_critic_mod
+
+        async def _synth_stub(videos, pdfs, trees):
+            return list(trees)
+
+        async def _critic_stub(decision_trees, *, client=None):
+            return [_gap("gap_narr_new")]
+
+        monkeypatch.setattr(narr_mod, "synthesize_narrative", _synth_stub)
+        monkeypatch.setattr(
+            narr_critic_mod, "critique_narratives", _critic_stub
+        )
+
+        orch = PhaseOrchestrator()
+        project = _project("proj_narr_prior")
+        project.gaps = [_gap("gap_prior1"), _gap("gap_prior2")]
+
+        await orch._run_narrative(project)
+
+        assert [g.gap_id for g in project.gaps] == [
+            "gap_prior1",
+            "gap_prior2",
+            "gap_narr_new",
+        ]
