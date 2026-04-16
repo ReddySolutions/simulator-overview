@@ -7,6 +7,7 @@ import type {
 } from "../types";
 import WireframeScreen from "./WireframeScreen";
 import NarrativePanel from "./NarrativePanel";
+import ProgressTracker from "./ProgressTracker";
 
 /* ---------- Tree navigation helpers ---------- */
 
@@ -54,107 +55,6 @@ function countPathLength(
   return 1 + maxChild;
 }
 
-/** Get all screen IDs reachable from root for the mini-map tree. */
-function getReachableScreens(
-  rootId: string,
-  adjacency: Map<string, Array<{ action: string; targetId: string }>>,
-): Set<string> {
-  const visited = new Set<string>();
-  const queue = [rootId];
-  while (queue.length > 0) {
-    const current = queue.pop()!;
-    if (visited.has(current)) continue;
-    visited.add(current);
-    for (const child of adjacency.get(current) ?? []) {
-      queue.push(child.targetId);
-    }
-  }
-  return visited;
-}
-
-/* ---------- Mini-map tree node ---------- */
-
-interface TreeNodeProps {
-  screenId: string;
-  screens: Record<string, WorkflowScreen>;
-  adjacency: Map<string, Array<{ action: string; targetId: string }>>;
-  visitedScreens: Set<string>;
-  currentScreenId: string;
-  pathScreenIds: Set<string>;
-  onJump: (screenId: string) => void;
-  depth: number;
-  maxDepth: number;
-}
-
-function TreeNode({
-  screenId,
-  screens,
-  adjacency,
-  visitedScreens,
-  currentScreenId,
-  pathScreenIds,
-  onJump,
-  depth,
-  maxDepth,
-}: TreeNodeProps) {
-  const screen = screens[screenId];
-  const title = screen?.title ?? screenId.slice(0, 8);
-  const isCurrent = screenId === currentScreenId;
-  const isOnPath = pathScreenIds.has(screenId);
-  const isVisited = visitedScreens.has(screenId);
-  const children = adjacency.get(screenId) ?? [];
-
-  if (depth > maxDepth) return null;
-
-  return (
-    <div className="ml-3 first:ml-0">
-      <button
-        type="button"
-        onClick={() => isVisited && onJump(screenId)}
-        disabled={!isVisited}
-        className={`flex items-center gap-1.5 rounded px-1.5 py-0.5 text-left text-xs transition-colors w-full ${
-          isCurrent
-            ? "bg-blue-100 text-blue-800 font-semibold"
-            : isOnPath
-              ? "bg-blue-50 text-blue-600 font-medium"
-              : isVisited
-                ? "text-gray-700 hover:bg-gray-100 cursor-pointer"
-                : "text-gray-400 cursor-default"
-        }`}
-      >
-        <span
-          className={`inline-block w-2 h-2 rounded-full shrink-0 ${
-            isCurrent
-              ? "bg-blue-600"
-              : isVisited
-                ? "bg-green-400"
-                : "bg-gray-300 ring-1 ring-gray-200"
-          }`}
-        />
-        <span className="truncate">{title}</span>
-      </button>
-      {children.length > 0 && (
-        <div className="border-l border-gray-200 ml-2 mt-0.5 space-y-0.5">
-          {children.map((child) => (
-            <TreeNode
-              key={child.targetId}
-              screenId={child.targetId}
-              screens={screens}
-              adjacency={adjacency}
-              visitedScreens={visitedScreens}
-              currentScreenId={currentScreenId}
-              pathScreenIds={pathScreenIds}
-              onJump={onJump}
-              depth={depth + 1}
-              maxDepth={maxDepth}
-            />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 /* ---------- Main component ---------- */
 
 interface SimulationNavigatorProps {
@@ -200,12 +100,6 @@ export default function SimulationNavigator({
 
   // Path screen IDs for highlighting in mini-map
   const pathScreenIds = useMemo(() => new Set(history), [history]);
-
-  // Total reachable screens for progress calculation
-  const totalScreens = useMemo(() => {
-    if (trees.length === 0) return 0;
-    return getReachableScreens(trees[0].root_screen_id, adjacency).size;
-  }, [trees, adjacency]);
 
   // Step counter: current position on this path
   const pathLength = useMemo(() => {
@@ -273,64 +167,15 @@ export default function SimulationNavigator({
 
   return (
     <div className="flex gap-4 min-h-[500px]">
-      {/* Mini-map sidebar */}
-      <div className="w-56 shrink-0 rounded-lg border border-gray-200 bg-white p-3 overflow-y-auto max-h-[700px]">
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
-            Decision Tree
-          </h3>
-          <span className="text-[10px] text-gray-400">
-            {visitedScreens.size}/{totalScreens}
-          </span>
-        </div>
-
-        {/* Progress bar */}
-        <div className="mb-3">
-          <div className="h-1.5 w-full rounded-full bg-gray-100">
-            <div
-              className="h-1.5 rounded-full bg-blue-500 transition-all"
-              style={{
-                width: `${totalScreens > 0 ? (visitedScreens.size / totalScreens) * 100 : 0}%`,
-              }}
-            />
-          </div>
-          <p className="text-[10px] text-gray-400 mt-1">
-            Explored {visitedScreens.size} of {totalScreens} screens (
-            {totalScreens > 0
-              ? Math.round((visitedScreens.size / totalScreens) * 100)
-              : 0}
-            %)
-          </p>
-        </div>
-
-        {/* Tree structure */}
-        <div className="space-y-0.5">
-          {trees.map((tree) => (
-            <TreeNode
-              key={tree.root_screen_id}
-              screenId={tree.root_screen_id}
-              screens={screens}
-              adjacency={adjacency}
-              visitedScreens={visitedScreens}
-              currentScreenId={currentScreenId}
-              pathScreenIds={pathScreenIds}
-              onJump={jumpToScreen}
-              depth={0}
-              maxDepth={10}
-            />
-          ))}
-        </div>
-
-        {/* Unvisited hint */}
-        {visitedScreens.size < totalScreens && (
-          <div className="mt-3 rounded bg-amber-50 px-2 py-1.5 text-[10px] text-amber-700">
-            <span className="font-medium">
-              {totalScreens - visitedScreens.size}
-            </span>{" "}
-            screens left to explore. Try different branches!
-          </div>
-        )}
-      </div>
+      {/* Progress tracker sidebar */}
+      <ProgressTracker
+        trees={trees}
+        screens={screens}
+        visitedScreens={visitedScreens}
+        currentScreenId={currentScreenId}
+        pathScreenIds={pathScreenIds}
+        onJump={jumpToScreen}
+      />
 
       {/* Main simulation area */}
       <div className="flex-1 min-w-0">
