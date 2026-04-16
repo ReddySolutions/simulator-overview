@@ -21,6 +21,7 @@ class Settings(BaseSettings):
 
     # QA / LLM critic settings (default off — new code paths stay behind this flag)
     QA_ENABLE_LLM_CRITIC: bool = False
+    QA_BLOCK_ON_CRITICAL: bool = False
     NARRATIVE_FIDELITY_MODEL: str = "claude-haiku-4-5-20251001"
 
     model_config = {"env_prefix": "", "env_file": ".env"}

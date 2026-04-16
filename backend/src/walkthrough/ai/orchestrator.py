@@ -32,6 +32,7 @@ PHASE_ORDER = [
     "contradictions",
     "clarification",
     "generation",
+    "qa",
 ]
 
 
@@ -142,6 +143,12 @@ class PhaseOrchestrator:
         # Phase 7-8: Generation — produce final walkthrough JSON
         if _phase_index(resume) <= _phase_index("generation"):
             async for event in self._run_generation(project):
+                yield event
+            await self._save(project)
+
+        # Phase 9: QA — run validators in parallel and stash report on output
+        if _phase_index(resume) <= _phase_index("qa"):
+            async for event in self._run_qa(project):
                 yield event
             await self._save(project)
 
@@ -378,6 +385,41 @@ class PhaseOrchestrator:
 
         yield ProgressEvent(
             "generation", 100, "Walkthrough generation complete"
+        )
+
+    async def _run_qa(
+        self, project: Project,
+    ) -> AsyncGenerator[ProgressEvent, None]:
+        """Phase 9: Run QA validators in parallel and stash report on output.
+
+        Writes ``phases/qa.json`` and attaches the serialized report under
+        ``project.walkthrough_output['qa_report']``. When
+        ``Settings().QA_BLOCK_ON_CRITICAL`` is true and the report has
+        critical findings, transitions ``project.status`` to ``'qa_blocked'``.
+        """
+        from walkthrough.ai.qa.runner import run_qa
+
+        yield ProgressEvent("qa", 0, "Running QA validators...")
+
+        report = await run_qa(project)
+
+        if project.walkthrough_output is None:
+            project.walkthrough_output = {}
+        project.walkthrough_output["qa_report"] = report.model_dump(mode="json")
+
+        if self._settings.QA_BLOCK_ON_CRITICAL and report.has_critical:
+            project.status = "qa_blocked"
+
+        project.updated_at = _now()
+
+        critical_count = sum(
+            1
+            for r in report.results
+            for f in r.findings
+            if f.severity == "critical"
+        )
+        yield ProgressEvent(
+            "qa", 100, f"QA complete — {critical_count} critical findings"
         )
 
     async def _save(self, project: Project) -> None:

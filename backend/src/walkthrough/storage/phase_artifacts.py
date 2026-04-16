@@ -20,6 +20,7 @@ PHASE_ORDER = [
     "contradictions",
     "clarification",
     "generation",
+    "qa",
 ]
 
 

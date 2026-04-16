@@ -30,7 +30,14 @@ class ClarificationQuestion(BaseModel):
 class Project(BaseModel):
     project_id: str
     name: str
-    status: Literal["uploading", "analyzing", "clarifying", "generating", "complete"]
+    status: Literal[
+        "uploading",
+        "analyzing",
+        "clarifying",
+        "generating",
+        "complete",
+        "qa_blocked",
+    ]
     videos: list[VideoAnalysis]
     pdfs: list[PDFExtraction]
     decision_trees: list[DecisionTree]
