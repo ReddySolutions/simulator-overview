@@ -1,3 +1,4 @@
+"""SCAFFOLDING ONLY — not wired. Invariants harvested into ai/prompts/fidelity.py. PhaseOrchestrator in orchestrator.py is the live pipeline driver. Do not import WalkthroughAgent in new code."""
 from __future__ import annotations
 
 import json
