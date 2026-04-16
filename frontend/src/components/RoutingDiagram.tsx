@@ -12,110 +12,27 @@ import {
 } from "@xyflow/react";
 import dagre from "@dagrejs/dagre";
 import "@xyflow/react/dist/style.css";
-import type { DecisionTree, WorkflowScreen } from "../types";
+import type { DecisionTree, WalkthroughWarning, WorkflowScreen } from "../types";
+import GraphNodePreview, {
+  type GraphNodeData,
+  computeNodeSize,
+} from "./GraphNodePreview";
 
-const NODE_WIDTH = 180;
-const NODE_HEIGHT = 100;
-
-/* ---------- Custom node data ---------- */
-
-interface ScreenNodeData extends Record<string, unknown> {
-  screen: WorkflowScreen;
-  stepCount: number;
-  selected: boolean;
-}
-
-type ScreenNode = Node<ScreenNodeData>;
-
-/* ---------- Custom node component ---------- */
-
-function ScreenNodeComponent({ data }: { data: ScreenNodeData }) {
-  const { screen, stepCount, selected } = data;
-  const isObserved = screen.evidence_tier === "observed";
-
-  const elementIcons = useMemo(() => {
-    const typeIcons: Record<string, string> = {
-      button: "Btn",
-      dropdown: "Sel",
-      text_field: "Txt",
-      tab: "Tab",
-      label: "Lbl",
-      checkbox: "Chk",
-      radio: "Rad",
-      link: "Lnk",
-      table: "Tbl",
-      other: "...",
-    };
-    const seen = new Set<string>();
-    const icons: { type: string; label: string }[] = [];
-    for (const el of screen.ui_elements) {
-      if (!seen.has(el.element_type) && icons.length < 8) {
-        seen.add(el.element_type);
-        icons.push({
-          type: el.element_type,
-          label: typeIcons[el.element_type] ?? "?",
-        });
-      }
-    }
-    return icons;
-  }, [screen.ui_elements]);
-
-  return (
-    <div
-      className={`rounded-lg bg-white px-3 py-2 shadow-sm w-[180px] cursor-pointer transition-all ${
-        isObserved
-          ? "border-2 border-blue-400"
-          : "border-2 border-dashed border-gray-300"
-      } ${selected ? "ring-2 ring-blue-600 ring-offset-2" : "hover:shadow-md"}`}
-    >
-      <div className="flex items-start justify-between gap-1 mb-1.5">
-        <h3 className="text-xs font-semibold text-gray-800 leading-tight line-clamp-2 flex-1">
-          {screen.title}
-        </h3>
-        <span className="shrink-0 inline-flex items-center justify-center rounded-full bg-gray-100 text-[10px] font-medium text-gray-600 w-5 h-5">
-          {stepCount}
-        </span>
-      </div>
-
-      {elementIcons.length > 0 && (
-        <div className="flex flex-wrap gap-1 mb-1.5">
-          {elementIcons.map((icon) => (
-            <span
-              key={icon.type}
-              className="inline-block rounded bg-gray-100 px-1 py-0.5 text-[9px] font-mono text-gray-500"
-            >
-              {icon.label}
-            </span>
-          ))}
-        </div>
-      )}
-
-      <div className="flex items-center gap-1">
-        <span
-          className={`inline-block w-1.5 h-1.5 rounded-full ${
-            isObserved ? "bg-blue-400" : "bg-gray-300"
-          }`}
-        />
-        <span className="text-[9px] text-gray-400">
-          {isObserved ? "observed" : "mentioned"}
-        </span>
-      </div>
-    </div>
-  );
-}
+type PreviewNode = Node<GraphNodeData>;
 
 /* ---------- Dagre layout ---------- */
 
 function getLayoutedElements(
-  nodes: ScreenNode[],
+  nodes: PreviewNode[],
   edges: Edge[],
-): { nodes: ScreenNode[]; edges: Edge[] } {
+): { nodes: PreviewNode[]; edges: Edge[] } {
   const g = new dagre.graphlib.Graph();
   g.setDefaultEdgeLabel(() => ({}));
   g.setGraph({ rankdir: "TB", nodesep: 40, ranksep: 60 });
 
   for (const node of nodes) {
-    g.setNode(node.id, { width: NODE_WIDTH, height: NODE_HEIGHT });
+    const size = computeNodeSize(node.data.screen.ui_elements.length);
+    g.setNode(node.id, { width: size.width, height: size.height });
   }
   for (const edge of edges) {
     g.setEdge(edge.source, edge.target);
@@ -125,11 +42,12 @@ function getLayoutedElements(
 
   const layoutedNodes = nodes.map((node) => {
     const pos = g.node(node.id);
+    const size = computeNodeSize(node.data.screen.ui_elements.length);
     return {
       ...node,
       position: {
-        x: pos.x - NODE_WIDTH / 2,
-        y: pos.y - NODE_HEIGHT / 2,
+        x: pos.x - size.width / 2,
+        y: pos.y - size.height / 2,
       },
       sourcePosition: Position.Bottom,
       targetPosition: Position.Top,
@@ -145,8 +63,10 @@ function buildGraph(
   trees: DecisionTree[],
   screens: Record<string, WorkflowScreen>,
   selectedScreenId: string | null,
-): { nodes: ScreenNode[]; edges: Edge[] } {
-  const nodeMap = new Map<string, ScreenNode>();
+  warningScreenIds: Set<string>,
+  visitedScreens: Set<string>,
+): { nodes: PreviewNode[]; edges: Edge[] } {
+  const nodeMap = new Map<string, PreviewNode>();
   const edgeSet = new Set<string>();
   const edges: Edge[] = [];
 
@@ -173,12 +93,14 @@ function buildGraph(
 
       nodeMap.set(screenId, {
         id: screenId,
-        type: "screenNode",
+        type: "graphNodePreview",
         position: { x: 0, y: 0 },
         data: {
           screen,
           stepCount: countSteps(screenId, new Set()),
           selected: screenId === selectedScreenId,
+          hasWarning: warningScreenIds.has(screenId),
+          visited: visitedScreens.has(screenId),
         },
       });
     }
@@ -271,18 +193,22 @@ function NodeTooltip({
 /* ---------- Main component ---------- */
 
 const nodeTypes: NodeTypes = {
-  screenNode: ScreenNodeComponent,
+  graphNodePreview: GraphNodePreview,
 };
 
 interface RoutingDiagramProps {
   trees: DecisionTree[];
   screens: Record<string, WorkflowScreen>;
+  warnings?: WalkthroughWarning[];
+  visitedScreens?: Set<string>;
   onSelectScreen?: (screenId: string) => void;
 }
 
 export default function RoutingDiagram({
   trees,
   screens,
+  warnings = [],
+  visitedScreens = new Set(),
   onSelectScreen,
 }: RoutingDiagramProps) {
   const [selectedScreenId, setSelectedScreenId] = useState<string | null>(null);
@@ -291,9 +217,14 @@ export default function RoutingDiagram({
     position: { x: number; y: number };
   } | null>(null);
 
+  const warningScreenIds = useMemo(
+    () => new Set(warnings.map((w) => w.screen_id)),
+    [warnings],
+  );
+
   const { nodes, edges } = useMemo(
-    () => buildGraph(trees, screens, selectedScreenId),
-    [trees, screens, selectedScreenId],
+    () => buildGraph(trees, screens, selectedScreenId, warningScreenIds, visitedScreens),
+    [trees, screens, selectedScreenId, warningScreenIds, visitedScreens],
   );
 
   const onNodeClick: NodeMouseHandler = useCallback(
@@ -349,7 +280,8 @@ export default function RoutingDiagram({
         <MiniMap
           nodeStrokeWidth={3}
           nodeColor={(n) => {
-            const data = n.data as ScreenNodeData;
+            const data = n.data as GraphNodeData;
+            if (data?.hasWarning) return "#f87171";
             if (data?.selected) return "#2563eb";
             return data?.screen?.evidence_tier === "observed"
               ? "#60a5fa"

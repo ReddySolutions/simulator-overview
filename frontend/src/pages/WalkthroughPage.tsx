@@ -209,6 +209,7 @@ export default function WalkthroughPage() {
           <RoutingDiagram
             trees={output.decision_trees}
             screens={output.screens}
+            warnings={warnings}
             onSelectScreen={setSelectedScreenId}
           />
         )
