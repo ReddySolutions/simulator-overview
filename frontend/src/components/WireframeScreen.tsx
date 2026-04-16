@@ -215,12 +215,16 @@ interface WireframeScreenProps {
   screen: WorkflowScreen;
   warnings?: string[];
   warningEvidence?: Array<{ description: string; evidence: SourceRef[] }>;
+  onToggleNarrative?: () => void;
+  narrativeOpen?: boolean;
 }
 
 export default function WireframeScreen({
   screen,
   warnings,
   warningEvidence,
+  onToggleNarrative,
+  narrativeOpen,
 }: WireframeScreenProps) {
   const isObserved = screen.evidence_tier === "observed";
 
@@ -282,18 +286,37 @@ export default function WireframeScreen({
         {/* Title bar */}
         <div className="flex items-center justify-between border-b border-gray-200 bg-gray-50 px-4 py-3">
           <h3 className="text-sm font-semibold text-gray-800">{screen.title}</h3>
-          {!isObserved && (
-            <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-medium text-amber-700">
-              <svg className="h-3 w-3" fill="currentColor" viewBox="0 0 20 20">
-                <path
-                  fillRule="evenodd"
-                  d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a.75.75 0 000 1.5h.253a.25.25 0 01.244.304l-.459 2.066A1.75 1.75 0 0010.747 15H11a.75.75 0 000-1.5h-.253a.25.25 0 01-.244-.304l.459-2.066A1.75 1.75 0 009.253 9H9z"
-                  clipRule="evenodd"
-                />
-              </svg>
-              Mentioned, not observed
-            </span>
-          )}
+          <div className="flex items-center gap-2">
+            {!isObserved && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-medium text-amber-700">
+                <svg className="h-3 w-3" fill="currentColor" viewBox="0 0 20 20">
+                  <path
+                    fillRule="evenodd"
+                    d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a.75.75 0 000 1.5h.253a.25.25 0 01.244.304l-.459 2.066A1.75 1.75 0 0010.747 15H11a.75.75 0 000-1.5h-.253a.25.25 0 01-.244-.304l.459-2.066A1.75 1.75 0 009.253 9H9z"
+                    clipRule="evenodd"
+                  />
+                </svg>
+                Mentioned, not observed
+              </span>
+            )}
+            {onToggleNarrative && (
+              <button
+                type="button"
+                data-narrative-toggle
+                onClick={onToggleNarrative}
+                className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+                  narrativeOpen
+                    ? "bg-blue-100 text-blue-700"
+                    : "bg-gray-100 text-gray-600 hover:bg-blue-50 hover:text-blue-600"
+                }`}
+              >
+                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                </svg>
+                Why?
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Wireframe body */}
