@@ -3,6 +3,7 @@ import { useParams } from "react-router";
 import { getProject } from "../api/client";
 import type { Project, WalkthroughOutput } from "../types";
 import RoutingDiagram from "../components/RoutingDiagram";
+import SubDiagram from "../components/SubDiagram";
 
 type Tab = "routing" | "simulation" | "questions";
 
@@ -26,7 +27,7 @@ export default function WalkthroughPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>("routing");
-  const setSelectedScreenId = useState<string | null>(null)[1];
+  const [selectedScreenId, setSelectedScreenId] = useState<string | null>(null);
 
   const fetchProject = useCallback(async () => {
     if (!id) return;
@@ -189,11 +190,20 @@ export default function WalkthroughPage() {
 
       {/* Tab content */}
       {activeTab === "routing" && output && (
-        <RoutingDiagram
-          trees={output.decision_trees}
-          screens={output.screens}
-          onSelectScreen={setSelectedScreenId}
-        />
+        selectedScreenId ? (
+          <SubDiagram
+            trees={output.decision_trees}
+            screens={output.screens}
+            initialScreenId={selectedScreenId}
+            onBack={() => setSelectedScreenId(null)}
+          />
+        ) : (
+          <RoutingDiagram
+            trees={output.decision_trees}
+            screens={output.screens}
+            onSelectScreen={setSelectedScreenId}
+          />
+        )
       )}
       {activeTab === "simulation" && (
         <div className="rounded-lg border border-gray-200 bg-white p-8 text-center text-gray-400">
