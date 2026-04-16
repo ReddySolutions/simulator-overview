@@ -9,14 +9,16 @@ project state.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from walkthrough.config import Settings
+from walkthrough.deps import get_firestore_client, get_storage_client
 from walkthrough.models.project import Project
-from walkthrough.storage.firestore import FirestoreClient
+from walkthrough.storage.phase_artifacts import write_phase_artifact
 
 logger = logging.getLogger(__name__)
 
@@ -49,14 +51,9 @@ class PhaseOrchestrator:
     persisted state and skipping completed phases.
     """
 
-    def __init__(
-        self,
-        firestore_client: FirestoreClient | None = None,
-    ) -> None:
-        settings = Settings()
-        self._firestore = firestore_client or FirestoreClient(
-            settings.FIRESTORE_COLLECTION
-        )
+    def __init__(self) -> None:
+        self._settings = Settings()
+        self._firestore = get_firestore_client()
 
     async def run_pipeline(
         self, project_id: str
@@ -167,16 +164,29 @@ class PhaseOrchestrator:
         self, project: Project,
     ) -> AsyncGenerator[ProgressEvent, None]:
         """Phase 1-2: Analyze videos and extract PDFs with screenshot analysis."""
-        from walkthrough.ai.document_ai import extract_pdf, get_extracted_image
-        from walkthrough.ai.gemini_screenshot import analyze_screenshot
-        from walkthrough.ai.gemini_video import analyze_video
-        from walkthrough.storage.gcs import GCSClient
+        if self._settings.LOCAL_DEV:
+            from walkthrough.ai.local_gemini_screenshot import analyze_screenshot
+            from walkthrough.ai.local_gemini_video import analyze_video
+            from walkthrough.ai.local_pdf import (
+                extract_pdf,
+                get_extracted_image,
+            )
+        else:
+            from walkthrough.ai.document_ai import (  # type: ignore[no-redef]
+                extract_pdf,
+                get_extracted_image,
+            )
+            from walkthrough.ai.gemini_screenshot import (  # type: ignore[no-redef]
+                analyze_screenshot,
+            )
+            from walkthrough.ai.gemini_video import (  # type: ignore[no-redef]
+                analyze_video,
+            )
 
-        settings = Settings()
-        gcs = GCSClient(settings.GCS_BUCKET)
+        storage = get_storage_client()
 
         prefix = f"projects/{project.project_id}/uploads/"
-        blobs = await gcs.list_blobs(prefix)
+        blobs = await storage.list_blobs(prefix)
 
         mp4_blobs = [b for b in blobs if b.lower().endswith(".mp4")]
         pdf_blobs = [b for b in blobs if b.lower().endswith(".pdf")]
@@ -200,8 +210,30 @@ class PhaseOrchestrator:
                 "video_analysis", pct, f"Analyzing video: {filename}"
             )
 
-            gs_uri = f"gs://{settings.GCS_BUCKET}/{blob_path}"
-            result = await analyze_video(gs_uri, video_id)
+            if self._settings.LOCAL_DEV:
+                file_uri = f"local://{blob_path}"
+            else:
+                file_uri = f"gs://{self._settings.GCS_BUCKET}/{blob_path}"
+
+            q: asyncio.Queue[str] = asyncio.Queue()
+
+            async def _cb(msg: str, _q: asyncio.Queue[str] = q) -> None:
+                await _q.put(msg)
+
+            task = asyncio.create_task(
+                asyncio.wait_for(analyze_video(file_uri, video_id, _cb), timeout=600)
+            )
+            while not task.done():
+                try:
+                    msg = await asyncio.wait_for(
+                        asyncio.shield(q.get()), timeout=2.0
+                    )
+                    yield ProgressEvent("video_analysis", pct, msg)
+                except asyncio.TimeoutError:
+                    pass
+            while not q.empty():
+                yield ProgressEvent("video_analysis", pct, q.get_nowait())
+            result = await task
             project.videos.append(result)
             processed += 1
 
@@ -221,8 +253,11 @@ class PhaseOrchestrator:
                 "pdf_extraction", pct, f"Extracting PDF: {filename}"
             )
 
-            gs_uri = f"gs://{settings.GCS_BUCKET}/{blob_path}"
-            extraction = await extract_pdf(gs_uri, pdf_id)
+            if self._settings.LOCAL_DEV:
+                file_uri = f"local://{blob_path}"
+            else:
+                file_uri = f"gs://{self._settings.GCS_BUCKET}/{blob_path}"
+            extraction = await extract_pdf(file_uri, pdf_id)
 
             # Analyze screenshots from extracted images
             for i, img in enumerate(extraction.images):
@@ -244,6 +279,15 @@ class PhaseOrchestrator:
 
         project.decision_trees = await merge_paths(project.videos)
         project.updated_at = _now()
+        await write_phase_artifact(
+            project.project_id,
+            "path_merge",
+            {
+                "decision_trees": [
+                    t.model_dump(mode="json") for t in project.decision_trees
+                ]
+            },
+        )
 
     async def _run_narrative(self, project: Project) -> None:
         """Phase 4: Synthesize narratives. Preserves full tree structure (M6).
@@ -257,6 +301,15 @@ class PhaseOrchestrator:
             project.videos, project.pdfs, project.decision_trees,
         )
         project.updated_at = _now()
+        await write_phase_artifact(
+            project.project_id,
+            "narrative",
+            {
+                "decision_trees": [
+                    t.model_dump(mode="json") for t in project.decision_trees
+                ]
+            },
+        )
 
     async def _run_contradictions(self, project: Project) -> None:
         """Phase 5: Three-way cross-reference contradiction detection.
@@ -272,6 +325,11 @@ class PhaseOrchestrator:
         )
         project.status = "clarifying"
         project.updated_at = _now()
+        await write_phase_artifact(
+            project.project_id,
+            "contradictions",
+            {"gaps": [g.model_dump(mode="json") for g in project.gaps]},
+        )
 
     async def _run_clarification(self, project: Project) -> None:
         """Phase 6: Generate clarification questions from detected gaps.
@@ -283,6 +341,15 @@ class PhaseOrchestrator:
 
         project.questions = await generate_questions(project.gaps)
         project.updated_at = _now()
+        await write_phase_artifact(
+            project.project_id,
+            "clarification",
+            {
+                "questions": [
+                    q.model_dump(mode="json") for q in project.questions
+                ]
+            },
+        )
 
     async def _run_generation(
         self, project: Project,
@@ -304,6 +371,7 @@ class PhaseOrchestrator:
         project.walkthrough_output = output
         project.status = "complete"
         project.updated_at = _now()
+        await write_phase_artifact(project.project_id, "generation", output)
 
         yield ProgressEvent(
             "generation", 100, "Walkthrough generation complete"
