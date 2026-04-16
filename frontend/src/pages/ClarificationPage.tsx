@@ -2,9 +2,11 @@ import { useCallback, useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 import {
   answerQuestion,
+  getProject,
   listQuestions,
   markUnanswerable,
   questionsStatus,
+  regenerateWalkthrough,
   triggerGeneration,
 } from "../api/client";
 import type { QuestionResponse, QuestionsStatus, SourceRef } from "../types";
@@ -79,16 +81,19 @@ export default function ClarificationPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
+  const [isReopened, setIsReopened] = useState(false);
 
   const fetchData = useCallback(async () => {
     if (!id) return;
     try {
-      const [qs, st] = await Promise.all([
+      const [qs, st, proj] = await Promise.all([
         listQuestions(id),
         questionsStatus(id),
+        getProject(id),
       ]);
       setQuestions(qs);
       setStatus(st);
+      setIsReopened(proj.walkthrough_output !== null);
       // Pre-populate drafts with existing answers for resumption editing
       const existingDrafts: Record<string, string> = {};
       for (const q of qs) {
@@ -178,7 +183,11 @@ export default function ClarificationPage() {
     if (!id) return;
     setGenerating(true);
     try {
-      await triggerGeneration(id);
+      if (isReopened) {
+        await regenerateWalkthrough(id);
+      } else {
+        await triggerGeneration(id);
+      }
       navigate(`/progress/${id}`);
     } catch (err) {
       setError(
@@ -186,7 +195,7 @@ export default function ClarificationPage() {
       );
       setGenerating(false);
     }
-  }, [id, navigate]);
+  }, [id, navigate, isReopened]);
 
   // Group questions by severity
   const grouped = SEVERITY_ORDER.map((sev) => ({
@@ -267,7 +276,11 @@ export default function ClarificationPage() {
               onClick={handleGenerate}
               className="rounded-md bg-green-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-green-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
-              {generating ? "Starting..." : "Generate Walkthrough"}
+              {generating
+                ? "Starting..."
+                : isReopened
+                  ? "Regenerate Walkthrough"
+                  : "Generate Walkthrough"}
             </button>
           )}
         </div>

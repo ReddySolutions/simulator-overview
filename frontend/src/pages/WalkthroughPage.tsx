@@ -6,6 +6,7 @@ import RoutingDiagram from "../components/RoutingDiagram";
 import SubDiagram from "../components/SubDiagram";
 import SimulationNavigator from "../components/SimulationNavigator";
 import OpenQuestions from "../components/OpenQuestions";
+import ProjectControls from "../components/ProjectControls";
 
 type Tab = "routing" | "simulation" | "questions";
 
@@ -141,14 +142,19 @@ export default function WalkthroughPage() {
 
       {/* Hero section */}
       <div className="rounded-lg border border-gray-200 bg-white p-6 mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">{project.name}</h1>
-        <p className="mt-1 text-sm text-gray-500">
-          Generated from {sourceCount} source{" "}
-          {sourceCount === 1 ? "file" : "files"} ({project.videos.length}{" "}
-          {project.videos.length === 1 ? "video" : "videos"},{" "}
-          {project.pdfs.length} {project.pdfs.length === 1 ? "PDF" : "PDFs"})
-          &middot; {formatDate(project.updated_at)}
-        </p>
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">{project.name}</h1>
+            <p className="mt-1 text-sm text-gray-500">
+              Generated from {sourceCount} source{" "}
+              {sourceCount === 1 ? "file" : "files"} ({project.videos.length}{" "}
+              {project.videos.length === 1 ? "video" : "videos"},{" "}
+              {project.pdfs.length} {project.pdfs.length === 1 ? "PDF" : "PDFs"})
+              &middot; {formatDate(project.updated_at)}
+            </p>
+          </div>
+          <ProjectControls projectId={project.project_id} projectName={project.name} />
+        </div>
 
         {/* Stats cards */}
         {stats && (
