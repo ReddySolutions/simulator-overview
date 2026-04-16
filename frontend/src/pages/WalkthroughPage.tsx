@@ -5,6 +5,7 @@ import type { Project, WalkthroughOutput } from "../types";
 import RoutingDiagram from "../components/RoutingDiagram";
 import SubDiagram from "../components/SubDiagram";
 import SimulationNavigator from "../components/SimulationNavigator";
+import OpenQuestions from "../components/OpenQuestions";
 
 type Tab = "routing" | "simulation" | "questions";
 
@@ -213,10 +214,12 @@ export default function WalkthroughPage() {
           warnings={warnings}
         />
       )}
-      {activeTab === "questions" && (
-        <div className="rounded-lg border border-gray-200 bg-white p-8 text-center text-gray-400">
-          <p>Open Questions will be rendered here.</p>
-        </div>
+      {activeTab === "questions" && output && (
+        <OpenQuestions
+          openQuestions={output.open_questions}
+          trees={output.decision_trees}
+          screens={output.screens}
+        />
       )}
     </div>
   );
