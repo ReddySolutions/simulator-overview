@@ -243,6 +243,16 @@ export default function ClarificationPage() {
           <span className="flex-1">{error}</span>
           <button
             type="button"
+            onClick={() => {
+              setError(null);
+              fetchData();
+            }}
+            className="text-red-700 underline hover:text-red-800 text-xs"
+          >
+            Retry
+          </button>
+          <button
+            type="button"
             onClick={() => setError(null)}
             className="text-red-700 underline hover:text-red-800 text-xs"
           >
@@ -343,7 +353,7 @@ export default function ClarificationPage() {
                               const formatted = formatSourceRef(ref);
                               return (
                                 <li key={i} className="text-xs">
-                                  <span className="font-medium text-gray-700">
+                                  <span className="font-mono font-medium text-gray-700">
                                     {formatted.label}
                                   </span>
                                   {formatted.excerpt && (

@@ -4,7 +4,7 @@ export default function Layout() {
   const { id } = useParams<{ id: string }>();
 
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-900">
+    <div className="min-h-screen min-w-[1024px] bg-gray-50 text-gray-900">
       <header className="border-b border-gray-200 bg-white">
         <div className="mx-auto max-w-7xl px-6 py-4 flex items-center gap-4">
           <Link to="/" className="text-xl font-bold tracking-tight">

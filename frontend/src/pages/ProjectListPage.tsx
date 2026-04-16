@@ -153,6 +153,17 @@ export default function ProjectListPage() {
           <span className="flex-1">{error}</span>
           <button
             type="button"
+            onClick={() => {
+              setError(null);
+              setLoading(true);
+              fetchProjects();
+            }}
+            className="text-red-700 underline hover:text-red-800 text-xs"
+          >
+            Retry
+          </button>
+          <button
+            type="button"
             onClick={() => setError(null)}
             className="text-red-700 underline hover:text-red-800 text-xs"
           >
