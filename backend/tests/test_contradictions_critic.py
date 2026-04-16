@@ -302,6 +302,95 @@ class TestFlagOn:
 
         assert result == []
 
+    async def test_self_critique_off_does_not_call_surgical_review(self) -> None:
+        """QA flag on, self-critique off -> one HTTP call only."""
+        new_gap = {
+            "gap_id": "gap_x",
+            "severity": "medium",
+            "description": "some finding",
+            "evidence": [
+                {
+                    "source_type": "video",
+                    "reference": "train.mp4:00:10",
+                    "excerpt": "Submit",
+                },
+                {
+                    "source_type": "pdf",
+                    "reference": "SOP.pdf:S2",
+                    "excerpt": "Send",
+                },
+            ],
+        }
+        client = _make_client([json.dumps({"gaps": [new_gap]})])
+
+        result = await critique_contradictions(
+            [_video_with_submit()],
+            [_pdf_with_send()],
+            [_decision_tree()],
+            [],
+            client=client,
+        )
+
+        assert len(result) == 1
+        assert result[0].gap_id == "gap_x"
+        assert client.messages.create.await_count == 1
+
+
+class TestSelfCritiqueOn:
+    @pytest.fixture(autouse=True)
+    def _enable(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("QA_ENABLE_LLM_CRITIC", "true")
+        monkeypatch.setenv("ENABLE_SELF_CRITIQUE", "true")
+        monkeypatch.setenv("CONTRADICTION_CRITIC_MODEL", "claude-sonnet-4-6")
+        monkeypatch.setenv("SELF_CRITIQUE_MODEL", "claude-sonnet-4-6")
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+
+    async def test_surgical_review_v2_differs_from_v1(self) -> None:
+        """Flag on: reviewer edits v1 description; v2 gap carries edited text."""
+        v1_gap = {
+            "gap_id": "gap_x",
+            "severity": "medium",
+            "description": "Original description",
+            "evidence": [
+                {
+                    "source_type": "video",
+                    "reference": "train.mp4:00:10",
+                    "excerpt": "Submit",
+                },
+                {
+                    "source_type": "pdf",
+                    "reference": "SOP.pdf:S2",
+                    "excerpt": "Send",
+                },
+            ],
+        }
+        v1_text = json.dumps({"gaps": [v1_gap]})
+        edits_text = json.dumps(
+            {
+                "edits": [
+                    {
+                        "path": "gaps.0.description",
+                        "operation": "replace",
+                        "new_value": "Reviewed description",
+                    }
+                ]
+            }
+        )
+        client = _make_client([v1_text, edits_text])
+
+        result = await critique_contradictions(
+            [_video_with_submit()],
+            [_pdf_with_send()],
+            [_decision_tree()],
+            [],
+            client=client,
+        )
+
+        assert len(result) == 1
+        assert result[0].description == "Reviewed description"
+        # v1 + surgical_review = 2 calls
+        assert client.messages.create.await_count == 2
+
 
 def test_llm_gaps_response_roundtrip() -> None:
     payload = {

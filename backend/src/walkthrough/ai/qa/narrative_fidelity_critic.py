@@ -13,12 +13,23 @@ import logging
 from typing import Any
 
 import anthropic
+from pydantic import BaseModel
 
+from walkthrough.ai.llm.review_pass import surgical_review
 from walkthrough.config import Settings
 from walkthrough.models.project import Project
 from walkthrough.models.qa import ValidatorFinding, ValidatorResult
 
 logger = logging.getLogger(__name__)
+
+
+class _FidelityClaim(BaseModel):
+    claim: str = ""
+    reason: str = ""
+
+
+class _FidelityV1(BaseModel):
+    unsupported_claims: list[_FidelityClaim]
 
 SYSTEM_PROMPT = (
     "You check if narrative text is supported by source excerpts. "
@@ -107,7 +118,26 @@ async def validate(
             )
 
             text = _extract_text(response)
-            for claim in _parse_unsupported_claims(text):
+            claims_raw = _parse_unsupported_claims(text)
+
+            if settings.ENABLE_SELF_CRITIQUE:
+                v1_dict: dict[str, Any] = {"unsupported_claims": claims_raw}
+                source_excerpts = [
+                    ref.excerpt for ref in screen.source_refs if ref.excerpt
+                ]
+                v2_dict = await surgical_review(
+                    client,
+                    model=settings.SELF_CRITIQUE_MODEL,
+                    v1_output=v1_dict,
+                    source_excerpts=source_excerpts,
+                    schema=_FidelityV1,
+                )
+                reviewed_claims = v2_dict.get("unsupported_claims", [])
+                if not isinstance(reviewed_claims, list):
+                    reviewed_claims = []
+                claims_raw = [c for c in reviewed_claims if isinstance(c, dict)]
+
+            for claim in claims_raw:
                 claim_text = str(claim.get("claim", "")).strip()
                 reason_text = str(claim.get("reason", "")).strip()
                 if not claim_text and not reason_text:

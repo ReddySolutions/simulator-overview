@@ -20,6 +20,7 @@ import anthropic
 from pydantic import BaseModel
 
 from walkthrough.ai.llm.client import run_structured_json
+from walkthrough.ai.llm.review_pass import surgical_review
 from walkthrough.ai.prompts.compose import compose_system_prompt
 from walkthrough.ai.prompts.fidelity import (
     AUTHORITY_HIERARCHY,
@@ -54,6 +55,20 @@ def _format_timestamp(seconds: float) -> str:
     mins = int(seconds) // 60
     secs = int(seconds) % 60
     return f"{mins:02d}:{secs:02d}"
+
+
+def _source_excerpts(
+    videos: list[VideoAnalysis], pdfs: list[PDFExtraction]
+) -> list[str]:
+    """Flatten audio segments + PDF section text into a list of prose excerpts."""
+    excerpts: list[str] = []
+    for va in videos:
+        for seg in va.audio_segments:
+            excerpts.append(seg.text[:200])
+    for pdf in pdfs:
+        for s in pdf.sections:
+            excerpts.append(s.text[:200])
+    return excerpts
 
 
 def _build_payload(
@@ -170,6 +185,18 @@ async def critique_contradictions(
             "returning no additions"
         )
         return []
+
+    if settings.ENABLE_SELF_CRITIQUE:
+        source_excerpts = _source_excerpts(videos, pdfs)
+        v1_dict = response.model_dump(mode="json")
+        v2_dict = await surgical_review(
+            client,
+            model=settings.SELF_CRITIQUE_MODEL,
+            v1_output=v1_dict,
+            source_excerpts=source_excerpts,
+            schema=LLMGapsResponse,
+        )
+        response = LLMGapsResponse.model_validate(v2_dict)
 
     combined = _deduplicate_gaps(existing_gaps + response.gaps)
     existing_ids = {g.gap_id for g in existing_gaps}
