@@ -146,6 +146,29 @@ export interface WalkthroughOutput {
   warnings: WalkthroughWarning[];
   open_questions: OpenQuestion[];
   stats: WalkthroughStats;
+  qa_report?: QAReport;
+}
+
+// QA report models (mirror backend walkthrough.models.qa)
+export interface QAValidatorFinding {
+  severity: "critical" | "medium" | "low" | "info";
+  code: string;
+  message: string;
+  screen_id?: string | null;
+  evidence: SourceRef[];
+}
+
+export interface QAValidatorResult {
+  validator: string;
+  ok: boolean;
+  findings: QAValidatorFinding[];
+}
+
+export interface QAReport {
+  project_id: string;
+  results: QAValidatorResult[];
+  has_critical: boolean;
+  generated_at: string;
 }
 
 export interface WalkthroughWarning {

@@ -228,6 +228,7 @@ export default function WalkthroughPage() {
           screens={output.screens}
         />
       )}
+      {/* TODO: render QA report UI (US-011 stub — type only) */}
     </div>
   );
 }
