@@ -74,6 +74,7 @@ export default function ClarificationPage() {
   const [questions, setQuestions] = useState<QuestionResponse[]>([]);
   const [status, setStatus] = useState<QuestionsStatus | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [editing, setEditing] = useState<Record<string, boolean>>({});
   const [submitting, setSubmitting] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -88,6 +89,16 @@ export default function ClarificationPage() {
       ]);
       setQuestions(qs);
       setStatus(st);
+      // Pre-populate drafts with existing answers for resumption editing
+      const existingDrafts: Record<string, string> = {};
+      for (const q of qs) {
+        if (q.answer && q.answer !== "Marked unanswerable by user") {
+          existingDrafts[q.question_id] = q.answer;
+        }
+      }
+      if (Object.keys(existingDrafts).length > 0) {
+        setDrafts((prev) => ({ ...existingDrafts, ...prev }));
+      }
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load questions");
@@ -120,6 +131,7 @@ export default function ClarificationPage() {
           delete next[questionId];
           return next;
         });
+        setEditing((prev) => ({ ...prev, [questionId]: false }));
         // Refresh status
         const st = await questionsStatus(id);
         setStatus(st);
@@ -292,6 +304,7 @@ export default function ClarificationPage() {
                   const isAnswered = q.answer !== null;
                   const isUnanswerable =
                     q.answer === "Marked unanswerable by user";
+                  const isEditing = editing[q.question_id] ?? false;
                   const isBusy = submitting[q.question_id] ?? false;
 
                   return (
@@ -332,32 +345,74 @@ export default function ClarificationPage() {
                         </div>
                       )}
 
-                      {/* Answer display (if already answered) */}
-                      {isAnswered && !isUnanswerable && (
+                      {/* Answer display (if already answered and not editing) */}
+                      {isAnswered && !isUnanswerable && !isEditing && (
                         <div className="mt-3 rounded-md bg-green-50 border border-green-100 px-3 py-2">
-                          <p className="text-xs font-semibold text-green-700 mb-1">
-                            Your answer
-                          </p>
-                          <p className="text-sm text-green-800">{q.answer}</p>
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <p className="text-xs font-semibold text-green-700 mb-1">
+                                Your answer
+                              </p>
+                              <p className="text-sm text-green-800">
+                                {q.answer}
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditing((prev) => ({
+                                  ...prev,
+                                  [q.question_id]: true,
+                                }));
+                                setDrafts((prev) => ({
+                                  ...prev,
+                                  [q.question_id]: q.answer ?? "",
+                                }));
+                              }}
+                              className="text-xs text-green-700 hover:text-green-900 underline shrink-0"
+                            >
+                              Edit
+                            </button>
+                          </div>
                         </div>
                       )}
 
                       {/* Unanswerable indicator */}
-                      {isUnanswerable && (
+                      {isUnanswerable && !isEditing && (
                         <div className="mt-3 rounded-md bg-amber-50 border border-amber-100 px-3 py-2">
-                          <p className="text-xs font-semibold text-amber-700">
-                            Marked as unanswerable
-                          </p>
-                          {q.severity === "critical" && (
-                            <p className="text-xs text-amber-600 mt-0.5">
-                              A warning will be placed on affected screens.
-                            </p>
-                          )}
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <p className="text-xs font-semibold text-amber-700">
+                                Marked as unanswerable
+                              </p>
+                              {q.severity === "critical" && (
+                                <p className="text-xs text-amber-600 mt-0.5">
+                                  A warning will be placed on affected screens.
+                                </p>
+                              )}
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditing((prev) => ({
+                                  ...prev,
+                                  [q.question_id]: true,
+                                }));
+                                setDrafts((prev) => ({
+                                  ...prev,
+                                  [q.question_id]: "",
+                                }));
+                              }}
+                              className="text-xs text-amber-700 hover:text-amber-900 underline shrink-0"
+                            >
+                              Edit
+                            </button>
+                          </div>
                         </div>
                       )}
 
-                      {/* Answer input (if not yet answered) */}
-                      {!isAnswered && (
+                      {/* Answer input (if not yet answered or editing) */}
+                      {(!isAnswered || isEditing) && (
                         <div className="mt-3 space-y-2">
                           <textarea
                             rows={2}
@@ -381,16 +436,39 @@ export default function ClarificationPage() {
                               onClick={() => handleAnswer(q.question_id)}
                               className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                             >
-                              {isBusy ? "Submitting..." : "Submit Answer"}
+                              {isBusy
+                                ? "Submitting..."
+                                : isEditing
+                                  ? "Update Answer"
+                                  : "Submit Answer"}
                             </button>
-                            <button
-                              type="button"
-                              disabled={isBusy}
-                              onClick={() => handleUnanswerable(q.question_id)}
-                              className="rounded-md bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                            >
-                              Mark Unanswerable
-                            </button>
+                            {!isEditing && (
+                              <button
+                                type="button"
+                                disabled={isBusy}
+                                onClick={() =>
+                                  handleUnanswerable(q.question_id)
+                                }
+                                className="rounded-md bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                              >
+                                Mark Unanswerable
+                              </button>
+                            )}
+                            {isEditing && (
+                              <button
+                                type="button"
+                                disabled={isBusy}
+                                onClick={() =>
+                                  setEditing((prev) => ({
+                                    ...prev,
+                                    [q.question_id]: false,
+                                  }))
+                                }
+                                className="rounded-md bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                              >
+                                Cancel
+                              </button>
+                            )}
                           </div>
                         </div>
                       )}

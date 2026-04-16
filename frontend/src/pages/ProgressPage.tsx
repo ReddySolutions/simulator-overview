@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router";
-import { analyzeProject, streamProgress } from "../api/client";
+import {
+  analyzeProject,
+  getSession,
+  resumePipeline,
+  streamProgress,
+} from "../api/client";
 
 interface PhaseInfo {
   id: string;
@@ -139,16 +144,56 @@ export default function ProgressPage() {
       );
     };
 
-    // Trigger analysis, then open SSE stream
-    analyzeProject(id)
-      .then(() => connect())
-      .catch((err) => {
-        const msg = err instanceof Error ? err.message : "Failed to start analysis";
-        // 409 = already running — just connect to SSE for existing events
-        if (!msg.includes("already running")) {
-          setError(msg);
+    // Check session state first; resume if possible, otherwise start fresh analysis
+    getSession(id)
+      .then((session) => {
+        if (closedRef.current) return;
+
+        // Already at a terminal state — redirect immediately
+        if (session.phase === "complete") {
+          closedRef.current = true;
+          navigate(`/walkthrough/${id}`);
+          return;
         }
-        connect();
+        if (session.phase === "clarifying") {
+          closedRef.current = true;
+          navigate(`/clarify/${id}`);
+          return;
+        }
+
+        // Resume from where we left off
+        if (session.can_resume) {
+          resumePipeline(id)
+            .then(() => connect())
+            .catch(() => connect());
+          return;
+        }
+
+        // Fresh analysis
+        analyzeProject(id)
+          .then(() => connect())
+          .catch((err) => {
+            const msg =
+              err instanceof Error ? err.message : "Failed to start analysis";
+            // 409 = already running — just connect to SSE for existing events
+            if (!msg.includes("already running")) {
+              setError(msg);
+            }
+            connect();
+          });
+      })
+      .catch(() => {
+        // Session endpoint failed — fall back to starting analysis
+        analyzeProject(id)
+          .then(() => connect())
+          .catch((err) => {
+            const msg =
+              err instanceof Error ? err.message : "Failed to start analysis";
+            if (!msg.includes("already running")) {
+              setError(msg);
+            }
+            connect();
+          });
       });
 
     return () => {
