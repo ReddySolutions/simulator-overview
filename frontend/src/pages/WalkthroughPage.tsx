@@ -4,6 +4,7 @@ import { getProject } from "../api/client";
 import type { Project, WalkthroughOutput } from "../types";
 import RoutingDiagram from "../components/RoutingDiagram";
 import SubDiagram from "../components/SubDiagram";
+import SimulationNavigator from "../components/SimulationNavigator";
 
 type Tab = "routing" | "simulation" | "questions";
 
@@ -205,10 +206,12 @@ export default function WalkthroughPage() {
           />
         )
       )}
-      {activeTab === "simulation" && (
-        <div className="rounded-lg border border-gray-200 bg-white p-8 text-center text-gray-400">
-          <p>Simulation Navigator will be rendered here.</p>
-        </div>
+      {activeTab === "simulation" && output && (
+        <SimulationNavigator
+          trees={output.decision_trees}
+          screens={output.screens}
+          warnings={warnings}
+        />
       )}
       {activeTab === "questions" && (
         <div className="rounded-lg border border-gray-200 bg-white p-8 text-center text-gray-400">
