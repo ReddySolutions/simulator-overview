@@ -18,7 +18,10 @@ from datetime import datetime, timezone
 from walkthrough.config import Settings
 from walkthrough.deps import get_firestore_client, get_storage_client
 from walkthrough.models.project import Project
-from walkthrough.storage.phase_artifacts import write_phase_artifact
+from walkthrough.storage.phase_artifacts import (
+    completed_phases,
+    write_phase_artifact,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -401,15 +404,10 @@ def _phase_index(phase: str) -> int:
 def _infer_resume_phase(project: Project) -> str:
     """Determine which phase to resume from based on project state.
 
-    Infers progress from project.status and data presence. Each phase
-    leaves a detectable footprint:
-
-    - ingestion: populates project.videos / project.pdfs
-    - path_merge: populates project.decision_trees
-    - narrative: populates Narrative on WorkflowScreens
-    - contradictions: transitions status to 'clarifying'
-    - clarification: populates project.questions
-    - generation: transitions status to 'complete'
+    Terminal/paused states (complete, generating, clarifying) short-circuit
+    based on status alone. For in-flight analyzing/uploading runs, resume
+    is driven by the presence of per-phase artifact files on disk so that
+    killed pipelines pick up exactly where they left off.
     """
     if project.status == "complete":
         return "done"
@@ -427,21 +425,19 @@ def _infer_resume_phase(project: Project) -> str:
             return "generation"
         return "clarification"
 
-    # Status is "uploading" or "analyzing"
-    if not project.videos and not project.pdfs:
+    # Status is "uploading" or "analyzing" — drive resume from artifact presence.
+    done = set(completed_phases(project.project_id))
+    if not done or (not project.videos and not project.pdfs):
         return "ingestion"
 
-    if not project.decision_trees:
-        return "path_merge"
-
-    has_narrative = any(
-        screen.narrative is not None
-        for tree in project.decision_trees
-        for screen in tree.screens.values()
-    )
-    if not has_narrative:
-        return "narrative"
-
-    # Narratives exist + status still "analyzing" → contradictions phase
-    # (After contradictions complete, status transitions to "clarifying")
-    return "contradictions"
+    # Ingestion writes no artifact, so skip it — the presence of videos/pdfs
+    # above already confirms ingestion ran. Find the first downstream phase
+    # whose artifact is absent.
+    for phase in PHASE_ORDER:
+        if phase == "ingestion":
+            continue
+        if phase not in done:
+            return phase
+    # All artifacts present but status hasn't transitioned — resume at
+    # generation so the pipeline finalizes walkthrough_output + status.
+    return "generation"
