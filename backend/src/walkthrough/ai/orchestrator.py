@@ -368,7 +368,9 @@ class PhaseOrchestrator:
         """
         from walkthrough.ai.tools.clarification import generate_questions
 
-        project.questions = await generate_questions(project.gaps)
+        project.questions = await generate_questions(
+            project.gaps, project.decision_trees,
+        )
         project.updated_at = _now()
         await write_phase_artifact(
             project.project_id,

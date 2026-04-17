@@ -80,6 +80,7 @@ export default function ClarificationPage() {
 
   const [questions, setQuestions] = useState<QuestionResponse[]>([]);
   const [status, setStatus] = useState<QuestionsStatus | null>(null);
+  const [activeSeverity, setActiveSeverity] = useState<SeverityGroup | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [editing, setEditing] = useState<Record<string, boolean>>({});
   const [submitting, setSubmitting] = useState<Record<string, boolean>>({});
@@ -218,11 +219,20 @@ export default function ClarificationPage() {
     }
   }, [id, navigate, isReopened]);
 
-  // Group questions by severity
+  // Group questions by severity (backend already sorts by severity + impact).
   const grouped = SEVERITY_ORDER.map((sev) => ({
     severity: sev,
     questions: questions.filter((q) => q.severity === sev),
   })).filter((g) => g.questions.length > 0);
+
+  // Pick a sensible default tab: first severity with an unanswered question,
+  // else first severity with any question.
+  const defaultSeverity: SeverityGroup | null =
+    grouped.find((g) => g.questions.some((q) => q.answer === null))?.severity ??
+    grouped[0]?.severity ??
+    null;
+  const currentSeverity = activeSeverity ?? defaultSeverity;
+  const activeGroup = grouped.find((g) => g.severity === currentSeverity);
 
   if (loading) {
     return (
@@ -327,8 +337,47 @@ export default function ClarificationPage() {
         </div>
       )}
 
+      {/* Severity tabs */}
+      {grouped.length > 0 && (
+        <div className="mb-6 border-b border-gray-200">
+          <nav className="-mb-px flex gap-4" aria-label="Severity tabs">
+            {grouped.map((group) => {
+              const style = SEVERITY_STYLES[group.severity];
+              const unanswered = group.questions.filter(
+                (q) => q.answer === null,
+              ).length;
+              const isActive = group.severity === currentSeverity;
+              return (
+                <button
+                  key={group.severity}
+                  type="button"
+                  onClick={() => setActiveSeverity(group.severity)}
+                  className={`flex items-center gap-2 border-b-2 px-1 pb-3 text-sm font-medium transition-colors ${
+                    isActive
+                      ? "border-blue-600 text-blue-700"
+                      : "border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700"
+                  }`}
+                >
+                  <span>{style.label}</span>
+                  <span
+                    className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
+                      unanswered > 0 ? style.badge : "bg-gray-100 text-gray-500"
+                    }`}
+                  >
+                    {unanswered > 0
+                      ? `${unanswered} / ${group.questions.length}`
+                      : `${group.questions.length}`}
+                  </span>
+                </button>
+              );
+            })}
+          </nav>
+        </div>
+      )}
+
       <div className="space-y-8">
-        {grouped.map((group) => {
+        {activeGroup && (() => {
+          const group = activeGroup;
           const style = SEVERITY_STYLES[group.severity];
           return (
             <section key={group.severity}>
@@ -618,7 +667,7 @@ export default function ClarificationPage() {
               </div>
             </section>
           );
-        })}
+        })()}
       </div>
     </div>
   );

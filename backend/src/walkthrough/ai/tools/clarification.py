@@ -12,7 +12,7 @@ from __future__ import annotations
 import hashlib
 
 from walkthrough.models.project import Choice, ClarificationQuestion, Gap
-from walkthrough.models.workflow import SourceRef
+from walkthrough.models.workflow import DecisionTree, SourceRef
 
 
 def _question_id(description: str) -> str:
@@ -90,8 +90,33 @@ def _gap_to_question(gap: Gap) -> ClarificationQuestion:
     )
 
 
+def _impact_score(gap: Gap, decision_trees: list[DecisionTree]) -> int:
+    """Rough count of screens + branch points whose source_refs overlap the gap's evidence.
+
+    A gap that cites a keyframe reference shared by many screens (e.g. a
+    common entry point) ranks above a gap citing an obscure one-off keyframe.
+    Falls back to evidence count if the decision trees are empty or no
+    references match — ensures a stable non-zero ranking signal.
+    """
+    gap_refs = {ref.reference for ref in gap.evidence}
+    if not gap_refs:
+        return 0
+
+    hits = 0
+    for tree in decision_trees:
+        for screen in tree.screens.values():
+            if any(ref.reference in gap_refs for ref in screen.source_refs):
+                hits += 1
+        # Branch points don't carry SourceRefs directly, but if their
+        # screen_id maps to a screen we already counted, that's fine — we
+        # count the screen once and skip double counting here.
+
+    return hits if hits > 0 else len(gap.evidence)
+
+
 async def generate_questions(
     gaps: list[Gap],
+    decision_trees: list[DecisionTree] | None = None,
 ) -> list[ClarificationQuestion]:
     """Generate batched clarification questions from detected gaps.
 
@@ -126,18 +151,26 @@ async def generate_questions(
             )
         ]
 
-    # Convert gaps to questions, skipping already-resolved gaps
-    questions: list[ClarificationQuestion] = []
+    # Convert gaps to questions, skipping already-resolved gaps. Capture the
+    # gap alongside each question so we can compute impact-based ranking below.
+    trees = decision_trees or []
+    paired: list[tuple[ClarificationQuestion, Gap]] = []
     for gap in gaps:
         if gap.resolved:
             continue
-        questions.append(_gap_to_question(gap))
+        paired.append((_gap_to_question(gap), gap))
 
-    # Sort by severity: critical first (M4)
+    # Sort primarily by severity (critical first, M4); within a severity
+    # bucket, put the highest-impact gap first (affects most screens).
     severity_order = {"critical": 0, "medium": 1, "low": 2}
-    questions.sort(key=lambda q: severity_order.get(q.severity, 3))
+    paired.sort(
+        key=lambda pair: (
+            severity_order.get(pair[0].severity, 3),
+            -_impact_score(pair[1], trees),
+        )
+    )
 
-    return questions
+    return [q for q, _ in paired]
 
 
 async def apply_answer(
