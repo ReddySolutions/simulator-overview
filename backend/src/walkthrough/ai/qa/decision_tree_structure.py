@@ -54,6 +54,14 @@ def _collect_tree_findings(
                     )
                 )
 
+    # Branchless trees are rendered as a linear chain by the frontend
+    # (RoutingDiagram.tsx chains screens by Object.keys order). Every
+    # non-root screen would be flagged orphan/unreachable by the
+    # branch-based checks below — those are false positives. Skip
+    # reachability/orphan checks for trees with no branches.
+    if not tree.branches:
+        return findings
+
     reachable: set[str] = set()
     if tree.root_screen_id in tree.screens:
         queue: deque[str] = deque([tree.root_screen_id])

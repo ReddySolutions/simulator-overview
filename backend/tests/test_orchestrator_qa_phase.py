@@ -171,6 +171,82 @@ class TestQABlockOnCritical:
         assert project.status == "complete"
 
 
+class TestRunGenerationPhaseRunsQA:
+    """After clarification, the frontend calls run_generation_phase — not
+    run_pipeline. QA must run on this path too, otherwise it never runs
+    for any project that pauses for user input (i.e. almost all of them).
+    """
+
+    async def test_run_generation_phase_emits_qa_events(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from walkthrough.ai.orchestrator import PhaseOrchestrator
+        from walkthrough.ai.qa import runner as qa_runner
+        from walkthrough.models.qa import ValidatorResult
+
+        # Stub the Firestore load/save and generate_walkthrough so we can
+        # exercise the run_generation_phase → _run_qa path without real work.
+        orch = PhaseOrchestrator()
+        project = _project("proj_gen_qa")
+
+        async def _fake_load(_id: str) -> Project:
+            return project
+
+        async def _fake_save(_p: Project) -> None:
+            return None
+
+        async def _fake_generate(_p: Project) -> dict:
+            return {"metadata": {}, "screens": {}, "warnings": [], "stats": {
+                "total_screens": 0, "total_branches": 0,
+                "total_paths": 0, "open_questions": 0,
+            }}
+
+        async def _ok(p: Project) -> ValidatorResult:
+            return ValidatorResult(validator="stub", ok=True, findings=[])
+
+        monkeypatch.setattr(orch._firestore, "load_project", _fake_load)
+        monkeypatch.setattr(orch._firestore, "save_project", _fake_save)
+        monkeypatch.setattr(
+            "walkthrough.ai.tools.generate.generate_walkthrough",
+            _fake_generate,
+        )
+        monkeypatch.setattr(qa_runner, "VALIDATORS", [("stub", _ok)])
+
+        phases_seen: list[str] = []
+        async for event in orch.run_generation_phase("proj_gen_qa"):
+            phases_seen.append(event.phase)
+
+        assert "generation" in phases_seen
+        assert "qa" in phases_seen, (
+            "QA phase must run on run_generation_phase path, not only run_pipeline"
+        )
+
+
+class TestRunnerDefensiveCoercion:
+    """run_qa must coerce malformed validator return values instead of crashing."""
+
+    async def test_non_validator_result_becomes_structured_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from walkthrough.ai.qa import runner as qa_runner
+        from walkthrough.ai.qa.runner import run_qa
+
+        async def _bad(p: Project):  # returns a dict, not ValidatorResult
+            return {"this": "is wrong"}
+
+        monkeypatch.setattr(qa_runner, "VALIDATORS", [("misbehaving", _bad)])
+
+        project = _project("proj_bad_validator")
+        report = await run_qa(project)
+
+        assert len(report.results) == 1
+        result = report.results[0]
+        assert result.validator == "misbehaving"
+        assert result.ok is False
+        assert any(f.code == "validator_error" for f in result.findings)
+        assert any("dict" in f.message for f in result.findings)
+
+
 class TestProgressMessage:
     async def test_critical_count_in_final_event_message(
         self, monkeypatch: pytest.MonkeyPatch

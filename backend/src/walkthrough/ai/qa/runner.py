@@ -55,8 +55,20 @@ async def run_qa(project: Project) -> QAReport:
     for (name, _), outcome in zip(VALIDATORS, raw):
         if isinstance(outcome, BaseException):
             results.append(_error_result(name, outcome))
-        else:
+        elif isinstance(outcome, ValidatorResult):
             results.append(outcome)
+        else:
+            # Validator returned something other than a ValidatorResult —
+            # treat as a programming error, coerce so the pipeline doesn't crash.
+            results.append(
+                _error_result(
+                    name,
+                    TypeError(
+                        f"validator returned {type(outcome).__name__}, "
+                        f"expected ValidatorResult"
+                    ),
+                )
+            )
 
     has_critical = any(
         f.severity == "critical" for r in results for f in r.findings

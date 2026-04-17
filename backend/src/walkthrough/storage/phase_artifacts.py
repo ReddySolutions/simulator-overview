@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from functools import lru_cache
 from pathlib import Path
 
 from walkthrough.config import Settings
@@ -24,8 +25,17 @@ PHASE_ORDER = [
 ]
 
 
+@lru_cache(maxsize=1)
+def _settings() -> Settings:
+    """Cache Settings() — re-parsing .env on every artifact read is wasteful.
+
+    Tests that monkeypatch env vars can call ``_settings.cache_clear()``.
+    """
+    return Settings()
+
+
 def _phases_dir(project_id: str) -> Path:
-    settings = Settings()
+    settings = _settings()
     return (
         Path(settings.LOCAL_DATA_DIR)
         / "projects"

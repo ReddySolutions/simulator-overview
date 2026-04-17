@@ -19,21 +19,12 @@ from walkthrough.config import Settings
 from walkthrough.deps import get_firestore_client, get_storage_client
 from walkthrough.models.project import Project
 from walkthrough.storage.phase_artifacts import (
+    PHASE_ORDER,
     completed_phases,
     write_phase_artifact,
 )
 
 logger = logging.getLogger(__name__)
-
-PHASE_ORDER = [
-    "ingestion",
-    "path_merge",
-    "narrative",
-    "contradictions",
-    "clarification",
-    "generation",
-    "qa",
-]
 
 
 @dataclass
@@ -155,16 +146,19 @@ class PhaseOrchestrator:
     async def run_generation_phase(
         self, project_id: str,
     ) -> AsyncGenerator[ProgressEvent, None]:
-        """Run Phase 7-8 generation after clarification is complete.
+        """Run Phase 7-8 generation + Phase 9 QA after clarification completes.
 
-        Called when user triggers generation after answering questions.
-        Loads project, runs generation, and persists the result.
+        Called when the user triggers generation after answering questions.
+        The QA phase must run on this code path too — most real projects
+        pause for clarification and never re-enter `run_pipeline`.
         """
         project = await self._firestore.load_project(project_id)
         if project is None:
             raise ValueError(f"Project not found: {project_id}")
 
         async for event in self._run_generation(project):
+            yield event
+        async for event in self._run_qa(project):
             yield event
         await self._save(project)
 

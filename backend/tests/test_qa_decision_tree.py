@@ -231,3 +231,37 @@ class TestMultipleTrees:
         assert result.ok is False
         codes = [f.code for f in result.findings]
         assert codes.count("self_loop") == 1
+
+
+class TestBranchlessTree:
+    """Branchless trees render as a linear chain in the frontend
+    (RoutingDiagram.tsx chains screens by Object.keys order).
+    They must not produce orphan_screen or unreachable_screen findings.
+    """
+
+    async def test_branchless_multi_screen_tree_produces_no_orphans(self):
+        tree = DecisionTree(
+            root_screen_id="s1",
+            screens={
+                "s1": _screen("s1"),
+                "s2": _screen("s2"),
+                "s3": _screen("s3"),
+                "s4": _screen("s4"),
+            },
+            branches=[],
+        )
+        result = await validate(_project([tree]))
+
+        assert result.ok is True
+        assert result.findings == []
+
+    async def test_branchless_single_screen_is_clean(self):
+        tree = DecisionTree(
+            root_screen_id="only",
+            screens={"only": _screen("only")},
+            branches=[],
+        )
+        result = await validate(_project([tree]))
+
+        assert result.ok is True
+        assert result.findings == []
