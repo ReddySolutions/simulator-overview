@@ -22,7 +22,6 @@ import anthropic
 from pydantic import BaseModel
 
 from walkthrough.ai.llm.client import run_structured_json
-from walkthrough.ai.llm.review_pass import surgical_review
 from walkthrough.ai.prompts.compose import compose_system_prompt
 from walkthrough.ai.prompts.fidelity import (
     EVIDENCE_CITATION_RULES,
@@ -126,22 +125,6 @@ async def critique_narratives(
                     screen_id,
                 )
                 continue
-
-            if settings.ENABLE_SELF_CRITIQUE:
-                source_excerpts = [
-                    ref.excerpt
-                    for ref in screen.source_refs
-                    if ref.excerpt
-                ]
-                v1_dict = response.model_dump(mode="json")
-                v2_dict = await surgical_review(
-                    client,
-                    model=settings.SELF_CRITIQUE_MODEL,
-                    v1_output=v1_dict,
-                    source_excerpts=source_excerpts,
-                    schema=LLMUnsupportedResponse,
-                )
-                response = LLMUnsupportedResponse.model_validate(v2_dict)
 
             for item in response.unsupported:
                 claim = item.claim.strip()
