@@ -235,7 +235,6 @@ class TestRealValidatorsSmoke:
             "decision_tree_structure",
             "output_schema",
             "video_coverage",
-            "narrative_fidelity",
         ]
 
         report = await run_qa(_project("proj_smoke"))
@@ -250,10 +249,3 @@ class TestRealValidatorsSmoke:
             f.code == "generation_artifact_missing"
             for f in output_schema_result.findings
         )
-
-        # narrative_fidelity short-circuits with flag off
-        nf = next(
-            r for r in report.results if r.validator == "narrative_fidelity"
-        )
-        assert nf.ok is True
-        assert nf.findings == []
