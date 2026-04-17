@@ -304,23 +304,12 @@ class PhaseOrchestrator:
 
         After synthesis, narrative text is available for compression while
         workflow structures (screens, branches, elements) remain complete.
-        When ``Settings().QA_ENABLE_LLM_CRITIC`` is True, additionally runs
-        the narrative critic and APPENDS its findings to ``project.gaps``
-        (dedup runs later in ``_run_contradictions``).
         """
         from walkthrough.ai.tools.narrative import synthesize_narrative
 
         project.decision_trees = await synthesize_narrative(
             project.videos, project.pdfs, project.decision_trees,
         )
-
-        if self._settings.QA_ENABLE_LLM_CRITIC:
-            from walkthrough.ai.tools.narrative_critic import (
-                critique_narratives,
-            )
-            additional_gaps = await critique_narratives(project.decision_trees)
-            project.gaps = list(project.gaps) + additional_gaps
-
         project.updated_at = _now()
         await write_phase_artifact(
             project.project_id,
