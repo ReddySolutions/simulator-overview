@@ -324,34 +324,15 @@ class PhaseOrchestrator:
     async def _run_contradictions(self, project: Project) -> None:
         """Phase 5: Three-way cross-reference contradiction detection.
 
-        Runs the deterministic detector first. When
-        ``Settings().QA_ENABLE_LLM_CRITIC`` is True, additionally runs the
-        LLM critic and merges its novel findings into the gap list (dedup
-        by ``gap_id``). Transitions project status to 'clarifying'.
+        Transitions project status to 'clarifying' after completion.
         """
         from walkthrough.ai.tools.detect_contradictions import (
-            _deduplicate_gaps,
             detect_contradictions,
         )
-        from walkthrough.models.project import Gap
 
-        existing_gaps = await detect_contradictions(
+        project.gaps = await detect_contradictions(
             project.videos, project.pdfs, project.decision_trees,
         )
-
-        additional_gaps: list[Gap] = []
-        if self._settings.QA_ENABLE_LLM_CRITIC:
-            from walkthrough.ai.tools.detect_contradictions_critic import (
-                critique_contradictions,
-            )
-            additional_gaps = await critique_contradictions(
-                project.videos,
-                project.pdfs,
-                project.decision_trees,
-                existing_gaps,
-            )
-
-        project.gaps = _deduplicate_gaps(existing_gaps + additional_gaps)
         project.status = "clarifying"
         project.updated_at = _now()
         await write_phase_artifact(
