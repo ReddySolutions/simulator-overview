@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "react-router";
 import {
   answerMetaQuestion,
   answerQuestion,
+  bestGuessQuestion,
   getProject,
   listMetaQuestions,
   listQuestions,
@@ -93,6 +94,11 @@ export default function ClarificationPage() {
   const [submitting, setSubmitting] = useState<Record<string, boolean>>({});
   // When true for a question, show the free-text "Other" box instead of choice buttons
   const [otherMode, setOtherMode] = useState<Record<string, boolean>>({});
+  // Best-guess proposals (not yet confirmed)
+  const [guesses, setGuesses] = useState<
+    Record<string, { answer: string; rationale: string }>
+  >({});
+  const [guessing, setGuessing] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
@@ -181,6 +187,49 @@ export default function ClarificationPage() {
     },
     [submitAnswer],
   );
+
+  const handleBestGuess = useCallback(
+    async (questionId: string) => {
+      if (!id) return;
+      setGuessing((prev) => ({ ...prev, [questionId]: true }));
+      try {
+        const res = await bestGuessQuestion(id, questionId);
+        setGuesses((prev) => ({
+          ...prev,
+          [questionId]: { answer: res.answer, rationale: res.rationale },
+        }));
+      } catch (err) {
+        setError(
+          err instanceof Error ? err.message : "Best guess unavailable",
+        );
+      } finally {
+        setGuessing((prev) => ({ ...prev, [questionId]: false }));
+      }
+    },
+    [id],
+  );
+
+  const acceptGuess = useCallback(
+    async (questionId: string) => {
+      const guess = guesses[questionId];
+      if (!guess) return;
+      setGuesses((prev) => {
+        const next = { ...prev };
+        delete next[questionId];
+        return next;
+      });
+      await submitAnswer(questionId, guess.answer);
+    },
+    [guesses, submitAnswer],
+  );
+
+  const dismissGuess = useCallback((questionId: string) => {
+    setGuesses((prev) => {
+      const next = { ...prev };
+      delete next[questionId];
+      return next;
+    });
+  }, []);
 
   const handleUnanswerable = useCallback(
     async (questionId: string) => {
@@ -651,13 +700,65 @@ export default function ClarificationPage() {
                         const hasChoices = q.choices.length > 0;
                         const isOther = otherMode[q.question_id] ?? false;
                         const showChoices = hasChoices && !isOther && !isEditing;
+                        const guess = guesses[q.question_id];
+                        const isGuessing = guessing[q.question_id] ?? false;
                         return (
                           <div className="mt-3 space-y-3">
+                            {/* AI best-guess proposal */}
+                            {guess && (
+                              <div className="rounded-md border border-purple-200 bg-purple-50 p-3">
+                                <p className="text-xs font-semibold text-purple-700 uppercase tracking-wide">
+                                  AI best guess
+                                </p>
+                                <p className="mt-1 text-sm font-medium text-purple-900">
+                                  {guess.answer}
+                                </p>
+                                {guess.rationale && (
+                                  <p className="mt-1 text-xs text-purple-700 italic">
+                                    {guess.rationale}
+                                  </p>
+                                )}
+                                <div className="mt-2 flex gap-2">
+                                  <button
+                                    type="button"
+                                    disabled={isBusy}
+                                    onClick={() => acceptGuess(q.question_id)}
+                                    className="rounded-md bg-purple-600 px-3 py-1 text-xs font-semibold text-white shadow-sm hover:bg-purple-500 disabled:opacity-50 transition-colors"
+                                  >
+                                    Use this answer
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => dismissGuess(q.question_id)}
+                                    className="rounded-md bg-white px-3 py-1 text-xs font-semibold text-purple-700 ring-1 ring-inset ring-purple-300 hover:bg-purple-100 transition-colors"
+                                  >
+                                    Discard
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+
                             {showChoices && (
                               <div className="space-y-2">
-                                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
-                                  Pick one
-                                </p>
+                                <div className="flex items-center justify-between">
+                                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                                    Pick one
+                                  </p>
+                                  {!guess && (
+                                    <button
+                                      type="button"
+                                      disabled={isGuessing || isBusy}
+                                      onClick={() =>
+                                        handleBestGuess(q.question_id)
+                                      }
+                                      className="text-xs text-purple-700 hover:text-purple-900 underline disabled:opacity-50"
+                                    >
+                                      {isGuessing
+                                        ? "Thinking..."
+                                        : "\u2728 AI best guess"}
+                                    </button>
+                                  )}
+                                </div>
                                 <div className="grid gap-2">
                                   {q.choices.map((choice, idx) => (
                                     <button
@@ -776,6 +877,20 @@ export default function ClarificationPage() {
                                       className="rounded-md bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                                     >
                                       Mark Unanswerable
+                                    </button>
+                                  )}
+                                  {!isEditing && !guess && (
+                                    <button
+                                      type="button"
+                                      disabled={isGuessing || isBusy}
+                                      onClick={() =>
+                                        handleBestGuess(q.question_id)
+                                      }
+                                      className="rounded-md bg-white px-3 py-1.5 text-xs font-semibold text-purple-700 shadow-sm ring-1 ring-inset ring-purple-300 hover:bg-purple-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                                    >
+                                      {isGuessing
+                                        ? "Thinking..."
+                                        : "\u2728 AI best guess"}
                                     </button>
                                   )}
                                   {isEditing && (

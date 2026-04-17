@@ -1,6 +1,7 @@
 import type {
   AnalyzeResponse,
   AnswerResponse,
+  BestGuessResponse,
   CreateProjectResponse,
   MetaQuestion,
   Project,
@@ -102,6 +103,16 @@ export function answerQuestion(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ answer }),
   });
+}
+
+export function bestGuessQuestion(
+  projectId: string,
+  questionId: string,
+): Promise<BestGuessResponse> {
+  return request(
+    `/projects/${projectId}/questions/${questionId}/best-guess`,
+    { method: "POST" },
+  );
 }
 
 export function markUnanswerable(

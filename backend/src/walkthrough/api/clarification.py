@@ -75,6 +75,12 @@ class MetaAnswerRequest(BaseModel):
     answer: str
 
 
+class BestGuessResponse(BaseModel):
+    question_id: str
+    answer: str
+    rationale: str
+
+
 class GenerateResponse(BaseModel):
     project_id: str
     message: str
@@ -276,6 +282,52 @@ async def questions_status(project_id: str) -> QuestionsStatus:
         unanswerable=unanswerable,
         remaining_critical=remaining_critical,
         can_generate=can_generate,
+    )
+
+
+@router.post(
+    "/{project_id}/questions/{question_id}/best-guess",
+    response_model=BestGuessResponse,
+)
+async def best_guess_question(
+    project_id: str,
+    question_id: str,
+) -> BestGuessResponse:
+    """Ask the LLM to propose an answer + rationale for a single question.
+
+    Does NOT persist the answer — the client must POST it back via the
+    normal answer endpoint to commit. Returns 503 if the LLM call fails
+    or no api key is configured, so the UI can fall back to manual.
+    """
+    from walkthrough.ai.tools.best_guess import propose_best_guess
+
+    fs = _get_firestore()
+    project = await fs.load_project(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    target = next(
+        (q for q in project.questions if q.question_id == question_id),
+        None,
+    )
+    if target is None:
+        raise HTTPException(status_code=404, detail="Question not found")
+
+    # Use the user's prior answers as few-shot context for consistency.
+    prior = [
+        q for q in project.questions if q.question_id != question_id
+    ]
+    proposal = await propose_best_guess(target, prior)
+    if proposal is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Best-guess unavailable (LLM not configured or call failed)",
+        )
+
+    return BestGuessResponse(
+        question_id=question_id,
+        answer=proposal.answer,
+        rationale=proposal.rationale,
     )
 
 

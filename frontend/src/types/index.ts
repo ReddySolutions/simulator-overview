@@ -272,6 +272,12 @@ export interface MetaQuestion {
   answer: string | null;
 }
 
+export interface BestGuessResponse {
+  question_id: string;
+  answer: string;
+  rationale: string;
+}
+
 export interface SessionState {
   project_id: string;
   phase: string;
