@@ -1,10 +1,7 @@
-"""Tests for walkthrough/ai/prompts/fidelity.py and compose.py."""
+"""Tests for walkthrough/ai/prompts/fidelity.py."""
 
 from __future__ import annotations
 
-import pytest
-
-from walkthrough.ai.prompts.compose import compose_system_prompt
 from walkthrough.ai.prompts.fidelity import (
     AUTHORITY_HIERARCHY,
     EVIDENCE_CITATION_RULES,
@@ -70,37 +67,3 @@ class TestEvidenceCitationRules:
 
     def test_contains_sourceref_marker(self):
         assert "SourceRef" in EVIDENCE_CITATION_RULES
-
-
-class TestComposeSystemPrompt:
-    def test_deterministic(self):
-        a = compose_system_prompt("Block A", "Block B", task="do the thing")
-        b = compose_system_prompt("Block A", "Block B", task="do the thing")
-        assert a == b
-
-    def test_empty_task_raises(self):
-        with pytest.raises(ValueError):
-            compose_system_prompt("Block A", task="")
-
-    def test_whitespace_task_raises(self):
-        with pytest.raises(ValueError):
-            compose_system_prompt("Block A", task="   \n\t  ")
-
-    def test_contains_every_block_and_task(self):
-        out = compose_system_prompt(
-            FIDELITY_STANDARD,
-            INVARIANTS,
-            AUTHORITY_HIERARCHY,
-            EVIDENCE_CITATION_RULES,
-            task="Identify unsupported claims.",
-        )
-        assert FIDELITY_STANDARD in out
-        assert INVARIANTS in out
-        assert AUTHORITY_HIERARCHY in out
-        assert EVIDENCE_CITATION_RULES in out
-        assert "Identify unsupported claims." in out
-        assert "## Task" in out
-
-    def test_separator_and_task_prefix(self):
-        out = compose_system_prompt("A", "B", task="run it")
-        assert out == "A\n\n---\n\nB\n\n## Task\n\nrun it"
