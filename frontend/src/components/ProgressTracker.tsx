@@ -35,7 +35,36 @@ function getReachableScreens(
   return visited;
 }
 
+/* ---------- Title shortening ---------- */
+
+/**
+ * Compress sentence-length screen titles into readable sidebar labels.
+ * Upstream generation sometimes emits full descriptions ("The initial screen
+ * shows the NICE CXone Agent interface..."); truncation makes those
+ * indistinguishable. Prefer the first clause or the first ~6 words.
+ */
+function shortTitle(full: string): string {
+  const trimmed = full.trim();
+  // Drop leading filler like "The initial screen shows the ..."
+  const stripped = trimmed.replace(
+    /^(the\s+)?(initial\s+)?screen\s+(shows|displays|is)\s+(the\s+)?/i,
+    "",
+  );
+  // Cut at first sentence boundary or clause break
+  const clause = stripped.split(/[.;:—-]| with | containing /i)[0].trim();
+  const words = clause.split(/\s+/);
+  if (words.length <= 6) return capitalize(clause);
+  return capitalize(words.slice(0, 6).join(" ")) + "…";
+}
+
+function capitalize(s: string): string {
+  return s.length === 0 ? s : s[0].toUpperCase() + s.slice(1);
+}
+
 /* ---------- Tree node ---------- */
+
+/** Max visual indent; deeper nodes render flat with a "↳" prefix. */
+const MAX_INDENT_DEPTH = 3;
 
 interface TreeNodeProps {
   screenId: string;
@@ -46,7 +75,7 @@ interface TreeNodeProps {
   pathScreenIds: Set<string>;
   onJump: (screenId: string) => void;
   depth: number;
-  maxDepth: number;
+  rendered: Set<string>;
 }
 
 function TreeNode({
@@ -58,19 +87,39 @@ function TreeNode({
   pathScreenIds,
   onJump,
   depth,
-  maxDepth,
+  rendered,
 }: TreeNodeProps) {
   const screen = screens[screenId];
-  const title = screen?.title ?? screenId.slice(0, 8);
+  const title = shortTitle(screen?.title ?? screenId.slice(0, 8));
   const isCurrent = screenId === currentScreenId;
   const isOnPath = pathScreenIds.has(screenId);
   const isVisited = visitedScreens.has(screenId);
+  const alreadyRendered = rendered.has(screenId);
   const children = adjacency.get(screenId) ?? [];
 
-  if (depth > maxDepth) return null;
+  // Cycle / shared node: render as a reference leaf instead of recursing.
+  if (alreadyRendered) {
+    return (
+      <button
+        type="button"
+        onClick={() => isVisited && onJump(screenId)}
+        disabled={!isVisited}
+        className="flex items-center gap-1.5 rounded px-1.5 py-0.5 text-left text-[11px] italic text-gray-400 hover:bg-gray-100 w-full"
+        title={`Back to: ${screen?.title ?? screenId}`}
+      >
+        <span className="shrink-0">↩</span>
+        <span className="truncate">{title}</span>
+      </button>
+    );
+  }
+
+  rendered.add(screenId);
+
+  const indent = depth === 0 ? "" : depth <= MAX_INDENT_DEPTH ? "ml-3" : "";
+  const flatMarker = depth > MAX_INDENT_DEPTH;
 
   return (
-    <div className="ml-3 first:ml-0">
+    <div className={`${indent} first:ml-0`}>
       <button
         type="button"
         onClick={() => isVisited && onJump(screenId)}
@@ -84,7 +133,9 @@ function TreeNode({
                 ? "text-gray-700 hover:bg-gray-100 cursor-pointer"
                 : "text-gray-400 cursor-default"
         }`}
+        title={screen?.title ?? screenId}
       >
+        {flatMarker && <span className="text-gray-300 shrink-0">↳</span>}
         <span
           className={`inline-block w-2 h-2 rounded-full shrink-0 ${
             isCurrent
@@ -97,7 +148,9 @@ function TreeNode({
         <span className="truncate">{title}</span>
       </button>
       {children.length > 0 && (
-        <div className="border-l border-gray-200 ml-2 mt-0.5 space-y-0.5">
+        <div
+          className={`${depth < MAX_INDENT_DEPTH ? "border-l border-gray-200 ml-2" : ""} mt-0.5 space-y-0.5`}
+        >
           {children.map((child) => (
             <TreeNode
               key={child.targetId}
@@ -109,7 +162,7 @@ function TreeNode({
               pathScreenIds={pathScreenIds}
               onJump={onJump}
               depth={depth + 1}
-              maxDepth={maxDepth}
+              rendered={rendered}
             />
           ))}
         </div>
@@ -173,22 +226,26 @@ export default function ProgressTracker({
         </p>
       </div>
 
-      {/* Tree structure */}
+      {/* Tree structure — single shared `rendered` set dedupes cycles
+          and nodes reachable from multiple trees. */}
       <div className="space-y-0.5">
-        {trees.map((tree) => (
-          <TreeNode
-            key={tree.root_screen_id}
-            screenId={tree.root_screen_id}
-            screens={screens}
-            adjacency={adjacency}
-            visitedScreens={visitedScreens}
-            currentScreenId={currentScreenId}
-            pathScreenIds={pathScreenIds}
-            onJump={onJump}
-            depth={0}
-            maxDepth={10}
-          />
-        ))}
+        {(() => {
+          const rendered = new Set<string>();
+          return trees.map((tree) => (
+            <TreeNode
+              key={tree.root_screen_id}
+              screenId={tree.root_screen_id}
+              screens={screens}
+              adjacency={adjacency}
+              visitedScreens={visitedScreens}
+              currentScreenId={currentScreenId}
+              pathScreenIds={pathScreenIds}
+              onJump={onJump}
+              depth={0}
+              rendered={rendered}
+            />
+          ));
+        })()}
       </div>
 
       {/* Unvisited hint */}
