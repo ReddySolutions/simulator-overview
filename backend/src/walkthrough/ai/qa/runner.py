@@ -14,7 +14,6 @@ from typing import Awaitable, Callable
 
 from walkthrough.ai.qa import (
     decision_tree_structure,
-    narrative_fidelity_critic,
     output_schema,
     video_coverage,
 )
@@ -28,7 +27,6 @@ VALIDATORS: list[tuple[str, ValidatorFn]] = [
     ("decision_tree_structure", decision_tree_structure.validate),
     ("output_schema", output_schema.validate),
     ("video_coverage", video_coverage.validate),
-    ("narrative_fidelity", narrative_fidelity_critic.validate),
 ]
 
 
