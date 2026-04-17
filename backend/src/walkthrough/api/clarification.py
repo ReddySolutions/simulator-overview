@@ -26,11 +26,17 @@ router = APIRouter(prefix="/api/projects", tags=["clarification"])
 # --- Response models ---
 
 
+class ChoiceResponse(BaseModel):
+    label: str
+    description: str | None = None
+
+
 class QuestionResponse(BaseModel):
     question_id: str
     text: str
     severity: str
     evidence: list[Any]
+    choices: list[ChoiceResponse] = []
     answer: str | None
 
 
@@ -113,6 +119,10 @@ async def list_questions(project_id: str) -> list[QuestionResponse]:
             text=q.text,
             severity=q.severity,
             evidence=[ref.model_dump(mode="json") for ref in q.evidence],
+            choices=[
+                ChoiceResponse(label=c.label, description=c.description)
+                for c in q.choices
+            ],
             answer=q.answer,
         )
         for q in sorted_questions
@@ -161,6 +171,10 @@ async def answer_question(
             text=q.text,
             severity=q.severity,
             evidence=[ref.model_dump(mode="json") for ref in q.evidence],
+            choices=[
+                ChoiceResponse(label=c.label, description=c.description)
+                for c in q.choices
+            ],
             answer=q.answer,
         )
         for q in project.questions

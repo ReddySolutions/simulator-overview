@@ -19,11 +19,24 @@ class Gap(BaseModel):
     resolved: bool = False
 
 
+class Choice(BaseModel):
+    """A preset answer option for a ClarificationQuestion.
+
+    Shown as a clickable button in the clarification UI; clicking submits
+    the label as the question's answer. An optional description gives the
+    user a short explanation of what picking this choice means.
+    """
+
+    label: str
+    description: str | None = None
+
+
 class ClarificationQuestion(BaseModel):
     question_id: str
     text: str
     severity: Literal["critical", "medium", "low"]
     evidence: list[SourceRef]
+    choices: list[Choice] = []
     answer: str | None = None
 
 

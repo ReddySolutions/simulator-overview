@@ -9,7 +9,12 @@ import {
   regenerateWalkthrough,
   triggerGeneration,
 } from "../api/client";
-import type { QuestionResponse, QuestionsStatus, SourceRef } from "../types";
+import type {
+  Choice,
+  QuestionResponse,
+  QuestionsStatus,
+  SourceRef,
+} from "../types";
 
 type SeverityGroup = "critical" | "medium" | "low";
 
@@ -78,6 +83,8 @@ export default function ClarificationPage() {
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [editing, setEditing] = useState<Record<string, boolean>>({});
   const [submitting, setSubmitting] = useState<Record<string, boolean>>({});
+  // When true for a question, show the free-text "Other" box instead of choice buttons
+  const [otherMode, setOtherMode] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
@@ -116,16 +123,15 @@ export default function ClarificationPage() {
     fetchData();
   }, [fetchData]);
 
-  const handleAnswer = useCallback(
-    async (questionId: string) => {
+  const submitAnswer = useCallback(
+    async (questionId: string, rawAnswer: string) => {
       if (!id) return;
-      const answer = drafts[questionId]?.trim();
+      const answer = rawAnswer.trim();
       if (!answer) return;
 
       setSubmitting((prev) => ({ ...prev, [questionId]: true }));
       try {
         const res = await answerQuestion(id, questionId, answer);
-        // Update local question state
         setQuestions((prev) =>
           prev.map((q) =>
             q.question_id === questionId ? { ...q, answer: res.answer } : q,
@@ -137,7 +143,7 @@ export default function ClarificationPage() {
           return next;
         });
         setEditing((prev) => ({ ...prev, [questionId]: false }));
-        // Refresh status
+        setOtherMode((prev) => ({ ...prev, [questionId]: false }));
         const st = await questionsStatus(id);
         setStatus(st);
       } catch (err) {
@@ -148,7 +154,22 @@ export default function ClarificationPage() {
         setSubmitting((prev) => ({ ...prev, [questionId]: false }));
       }
     },
-    [id, drafts],
+    [id],
+  );
+
+  const handleAnswer = useCallback(
+    async (questionId: string) => {
+      const draft = drafts[questionId] ?? "";
+      await submitAnswer(questionId, draft);
+    },
+    [drafts, submitAnswer],
+  );
+
+  const handleChoice = useCallback(
+    async (questionId: string, choice: Choice) => {
+      await submitAnswer(questionId, choice.label);
+    },
+    [submitAnswer],
   );
 
   const handleUnanswerable = useCallback(
@@ -435,66 +456,162 @@ export default function ClarificationPage() {
                       )}
 
                       {/* Answer input (if not yet answered or editing) */}
-                      {(!isAnswered || isEditing) && (
-                        <div className="mt-3 space-y-2">
-                          <textarea
-                            rows={2}
-                            placeholder="Type your answer..."
-                            value={drafts[q.question_id] ?? ""}
-                            onChange={(e) =>
-                              setDrafts((prev) => ({
-                                ...prev,
-                                [q.question_id]: e.target.value,
-                              }))
-                            }
-                            disabled={isBusy}
-                            className="block w-full rounded-md border border-gray-300 px-3 py-2 text-sm placeholder:text-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:opacity-50 resize-none"
-                          />
-                          <div className="flex gap-2">
-                            <button
-                              type="button"
-                              disabled={
-                                isBusy || !(drafts[q.question_id]?.trim())
-                              }
-                              onClick={() => handleAnswer(q.question_id)}
-                              className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                            >
-                              {isBusy
-                                ? "Submitting..."
-                                : isEditing
-                                  ? "Update Answer"
-                                  : "Submit Answer"}
-                            </button>
-                            {!isEditing && (
-                              <button
-                                type="button"
-                                disabled={isBusy}
-                                onClick={() =>
-                                  handleUnanswerable(q.question_id)
-                                }
-                                className="rounded-md bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                              >
-                                Mark Unanswerable
-                              </button>
+                      {(!isAnswered || isEditing) && (() => {
+                        const hasChoices = q.choices.length > 0;
+                        const isOther = otherMode[q.question_id] ?? false;
+                        const showChoices = hasChoices && !isOther && !isEditing;
+                        return (
+                          <div className="mt-3 space-y-3">
+                            {showChoices && (
+                              <div className="space-y-2">
+                                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                                  Pick one
+                                </p>
+                                <div className="grid gap-2">
+                                  {q.choices.map((choice, idx) => (
+                                    <button
+                                      key={idx}
+                                      type="button"
+                                      disabled={isBusy}
+                                      onClick={() =>
+                                        handleChoice(q.question_id, choice)
+                                      }
+                                      className="group text-left rounded-md border border-gray-200 bg-white px-3 py-2 hover:border-blue-400 hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                                    >
+                                      <span className="flex items-center gap-2">
+                                        <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-gray-300 text-xs font-semibold text-gray-500 group-hover:border-blue-500 group-hover:text-blue-600">
+                                          {idx + 1}
+                                        </span>
+                                        <span className="text-sm font-medium text-gray-900 group-hover:text-blue-700">
+                                          {choice.label}
+                                        </span>
+                                      </span>
+                                      {choice.description && (
+                                        <p className="mt-1 pl-7 text-xs text-gray-500">
+                                          {choice.description}
+                                        </p>
+                                      )}
+                                    </button>
+                                  ))}
+                                  <button
+                                    type="button"
+                                    disabled={isBusy}
+                                    onClick={() =>
+                                      setOtherMode((prev) => ({
+                                        ...prev,
+                                        [q.question_id]: true,
+                                      }))
+                                    }
+                                    className="text-left rounded-md border border-dashed border-gray-300 bg-white px-3 py-2 hover:border-gray-400 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-gray-400 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                                  >
+                                    <span className="flex items-center gap-2">
+                                      <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-gray-300 text-xs font-semibold text-gray-500">
+                                        {q.choices.length + 1}
+                                      </span>
+                                      <span className="text-sm font-medium text-gray-700">
+                                        Other (type answer)
+                                      </span>
+                                    </span>
+                                  </button>
+                                </div>
+                                <div className="pt-1">
+                                  <button
+                                    type="button"
+                                    disabled={isBusy}
+                                    onClick={() =>
+                                      handleUnanswerable(q.question_id)
+                                    }
+                                    className="text-xs text-gray-500 hover:text-gray-700 underline disabled:opacity-50"
+                                  >
+                                    Mark Unanswerable
+                                  </button>
+                                </div>
+                              </div>
                             )}
-                            {isEditing && (
-                              <button
-                                type="button"
-                                disabled={isBusy}
-                                onClick={() =>
-                                  setEditing((prev) => ({
-                                    ...prev,
-                                    [q.question_id]: false,
-                                  }))
-                                }
-                                className="rounded-md bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                              >
-                                Cancel
-                              </button>
+
+                            {!showChoices && (
+                              <div className="space-y-2">
+                                <textarea
+                                  rows={2}
+                                  placeholder="Type your answer..."
+                                  value={drafts[q.question_id] ?? ""}
+                                  onChange={(e) =>
+                                    setDrafts((prev) => ({
+                                      ...prev,
+                                      [q.question_id]: e.target.value,
+                                    }))
+                                  }
+                                  disabled={isBusy}
+                                  autoFocus={isOther}
+                                  className="block w-full rounded-md border border-gray-300 px-3 py-2 text-sm placeholder:text-gray-400 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:opacity-50 resize-none"
+                                />
+                                <div className="flex gap-2">
+                                  <button
+                                    type="button"
+                                    disabled={
+                                      isBusy || !(drafts[q.question_id]?.trim())
+                                    }
+                                    onClick={() => handleAnswer(q.question_id)}
+                                    className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                                  >
+                                    {isBusy
+                                      ? "Submitting..."
+                                      : isEditing
+                                        ? "Update Answer"
+                                        : "Submit Answer"}
+                                  </button>
+                                  {isOther && !isEditing && (
+                                    <button
+                                      type="button"
+                                      disabled={isBusy}
+                                      onClick={() =>
+                                        setOtherMode((prev) => ({
+                                          ...prev,
+                                          [q.question_id]: false,
+                                        }))
+                                      }
+                                      className="rounded-md bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                                    >
+                                      Back to choices
+                                    </button>
+                                  )}
+                                  {!isEditing && !isOther && !hasChoices && (
+                                    <button
+                                      type="button"
+                                      disabled={isBusy}
+                                      onClick={() =>
+                                        handleUnanswerable(q.question_id)
+                                      }
+                                      className="rounded-md bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                                    >
+                                      Mark Unanswerable
+                                    </button>
+                                  )}
+                                  {isEditing && (
+                                    <button
+                                      type="button"
+                                      disabled={isBusy}
+                                      onClick={() => {
+                                        setEditing((prev) => ({
+                                          ...prev,
+                                          [q.question_id]: false,
+                                        }));
+                                        setOtherMode((prev) => ({
+                                          ...prev,
+                                          [q.question_id]: false,
+                                        }));
+                                      }}
+                                      className="rounded-md bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                                    >
+                                      Cancel
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
                             )}
                           </div>
-                        </div>
-                      )}
+                        );
+                      })()}
                     </div>
                   );
                 })}

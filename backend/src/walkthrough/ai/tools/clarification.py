@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import hashlib
 
-from walkthrough.models.project import ClarificationQuestion, Gap
+from walkthrough.models.project import Choice, ClarificationQuestion, Gap
 from walkthrough.models.workflow import SourceRef
 
 
@@ -46,13 +46,47 @@ def _build_question_text(gap: Gap) -> str:
     return f"{desc}\n\nPlease clarify how this should be handled."
 
 
+def _build_choices(gap: Gap) -> list[Choice]:
+    """Build preset choices for a gap — one per source-type version of a contradiction.
+
+    A gap is treated as a contradiction when its evidence spans two or more
+    source types (video + audio, video + PDF, etc.). Each distinct version
+    across sources becomes a preset the user can click to adjudicate (N2).
+
+    Single-source gaps receive no presets — the UI falls back to a free-text
+    answer, since there's no canonical side to pick between.
+    """
+    sources_by_type: dict[str, list[SourceRef]] = {}
+    for ref in gap.evidence:
+        sources_by_type.setdefault(ref.source_type, []).append(ref)
+
+    if len(sources_by_type) < 2:
+        return []
+
+    choices: list[Choice] = []
+    seen: set[str] = set()
+    for source_type, refs in sources_by_type.items():
+        label = (refs[0].excerpt or refs[0].reference).strip()
+        if not label or label in seen:
+            continue
+        seen.add(label)
+        choices.append(
+            Choice(
+                label=label,
+                description=f"Matches {source_type} source",
+            )
+        )
+    return choices
+
+
 def _gap_to_question(gap: Gap) -> ClarificationQuestion:
-    """Convert a single Gap into a ClarificationQuestion with evidence."""
+    """Convert a single Gap into a ClarificationQuestion with evidence and choices."""
     return ClarificationQuestion(
         question_id=_question_id(gap.gap_id),
         text=_build_question_text(gap),
         severity=gap.severity,
         evidence=list(gap.evidence),
+        choices=_build_choices(gap),
     )
 
 

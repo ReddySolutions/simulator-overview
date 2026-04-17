@@ -231,11 +231,17 @@ export interface ProgressEvent {
   message: string;
 }
 
+export interface Choice {
+  label: string;
+  description: string | null;
+}
+
 export interface QuestionResponse {
   question_id: string;
   text: string;
   severity: string;
   evidence: SourceRef[];
+  choices: Choice[];
   answer: string | null;
 }
 
