@@ -51,7 +51,7 @@ def _build_screen_wireframe(screen: WorkflowScreen) -> dict[str, Any]:
     wireframe: dict[str, Any] = {
         "screen_id": screen.screen_id,
         "title": screen.title,
-        "elements": elements,
+        "ui_elements": elements,
         "evidence_tier": screen.evidence_tier,
         "source_refs": [_source_ref_to_dict(r) for r in screen.source_refs],
     }
@@ -135,15 +135,16 @@ def _build_warnings(
             continue
 
         affected_screens = _find_affected_screens(gap, decision_trees)
-
-        warnings.append({
+        base = {
             "gap_id": gap.gap_id,
-            "severity": gap.severity,
             "description": gap.description,
             "evidence": [_source_ref_to_dict(r) for r in gap.evidence],
-            "affected_screens": affected_screens,
-            "resolution": gap.resolution,
-        })
+        }
+        if affected_screens:
+            for screen_id in affected_screens:
+                warnings.append({**base, "screen_id": screen_id})
+        else:
+            warnings.append({**base, "screen_id": ""})
 
     return warnings
 
@@ -238,7 +239,8 @@ async def generate_walkthrough(project: Project) -> dict[str, Any]:
     # Attach warnings to individual screens
     warning_map: dict[str, list[dict[str, Any]]] = {}
     for warning in warnings:
-        for sid in warning["affected_screens"]:
+        sid = warning["screen_id"]
+        if sid:
             warning_map.setdefault(sid, []).append({
                 "gap_id": warning["gap_id"],
                 "description": warning["description"],
@@ -270,9 +272,8 @@ async def generate_walkthrough(project: Project) -> dict[str, Any]:
         "open_questions": open_questions,
         "stats": {
             "total_screens": total_screens,
-            "total_branch_points": total_branches,
+            "total_branches": total_branches,
             "total_paths": total_paths,
-            "open_questions_count": len(open_questions),
-            "warnings_count": len(warnings),
+            "open_questions": len(open_questions),
         },
     }

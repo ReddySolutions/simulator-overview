@@ -7,8 +7,7 @@ from fastapi import UploadFile
 from google.cloud import storage
 
 from walkthrough.config import Settings
-
-ALLOWED_CONTENT_TYPES = {"video/mp4", "application/pdf"}
+from walkthrough.storage.constants import ALLOWED_CONTENT_TYPES
 
 
 class GCSClient:

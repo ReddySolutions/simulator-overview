@@ -14,8 +14,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from walkthrough.ai.orchestrator import PhaseOrchestrator, ProgressEvent
-from walkthrough.config import Settings
-from walkthrough.storage.firestore import FirestoreClient
+from walkthrough.deps import get_firestore_client
 
 logger = logging.getLogger(__name__)
 
@@ -53,9 +52,8 @@ class RegenerateResponse(BaseModel):
 # --- Helpers ---
 
 
-def _get_firestore() -> FirestoreClient:
-    settings = Settings()
-    return FirestoreClient(collection=settings.FIRESTORE_COLLECTION)
+def _get_firestore():  # type: ignore[no-untyped-def]
+    return get_firestore_client()
 
 
 def _phase_to_progress(status: str) -> int:
@@ -169,9 +167,10 @@ async def resume_pipeline(project_id: str) -> ResumeResponse:
         )
 
     if project_id in _active_pipelines:
-        raise HTTPException(
-            status_code=409,
-            detail="Pipeline is already running for this project",
+        return ResumeResponse(
+            project_id=project_id,
+            message="Pipeline already running",
+            resumed_from_phase=project.status,
         )
 
     resumed_from = project.status
@@ -254,9 +253,9 @@ async def regenerate_walkthrough(project_id: str) -> RegenerateResponse:
         )
 
     if project_id in _active_pipelines:
-        raise HTTPException(
-            status_code=409,
-            detail="Generation is already running for this project",
+        return RegenerateResponse(
+            project_id=project_id,
+            message="Generation already running",
         )
 
     queue: asyncio.Queue[ProgressEvent | None] = asyncio.Queue()

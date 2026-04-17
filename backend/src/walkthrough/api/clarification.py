@@ -16,8 +16,7 @@ from pydantic import BaseModel
 
 from walkthrough.ai.orchestrator import PhaseOrchestrator, ProgressEvent
 from walkthrough.ai.tools.clarification import apply_answer, mark_unanswerable
-from walkthrough.config import Settings
-from walkthrough.storage.firestore import FirestoreClient
+from walkthrough.deps import get_firestore_client
 
 logger = logging.getLogger(__name__)
 
@@ -66,9 +65,8 @@ class GenerateResponse(BaseModel):
 # --- Helpers ---
 
 
-def _get_firestore() -> FirestoreClient:
-    settings = Settings()
-    return FirestoreClient(collection=settings.FIRESTORE_COLLECTION)
+def _get_firestore():  # type: ignore[no-untyped-def]
+    return get_firestore_client()
 
 
 async def _run_generation_task(project_id: str) -> None:

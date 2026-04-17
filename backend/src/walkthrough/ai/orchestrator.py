@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -201,6 +202,7 @@ class PhaseOrchestrator:
         processed = 0
 
         # Video analysis
+        total_videos = max(len(mp4_blobs), 1)
         for blob_path in mp4_blobs:
             filename = blob_path.rsplit("/", 1)[-1]
             video_id = filename.rsplit(".", 1)[0]
@@ -209,9 +211,10 @@ class PhaseOrchestrator:
                 processed += 1
                 continue
 
-            pct = int(processed / total * 100) if total else 0
+            video_idx = processed
+            base_pct = int(video_idx / total_videos * 100)
             yield ProgressEvent(
-                "video_analysis", pct, f"Analyzing video: {filename}"
+                "video_analysis", base_pct, f"Analyzing {filename}…"
             )
 
             if self._settings.LOCAL_DEV:
@@ -219,27 +222,49 @@ class PhaseOrchestrator:
             else:
                 file_uri = f"gs://{self._settings.GCS_BUCKET}/{blob_path}"
 
-            q: asyncio.Queue[str] = asyncio.Queue()
+            q: asyncio.Queue[tuple[str, int]] = asyncio.Queue()
 
-            async def _cb(msg: str, _q: asyncio.Queue[str] = q) -> None:
-                await _q.put(msg)
+            async def _cb(
+                msg: str, sub_pct: int, _q: asyncio.Queue[tuple[str, int]] = q,
+            ) -> None:
+                await _q.put((msg, sub_pct))
 
             task = asyncio.create_task(
                 asyncio.wait_for(analyze_video(file_uri, video_id, _cb), timeout=600)
             )
+            start = time.monotonic()
+            last_msg = f"Analyzing {filename}"
+            last_sub_pct = 0
             while not task.done():
                 try:
-                    msg = await asyncio.wait_for(
+                    last_msg, last_sub_pct = await asyncio.wait_for(
                         asyncio.shield(q.get()), timeout=2.0
                     )
-                    yield ProgressEvent("video_analysis", pct, msg)
                 except asyncio.TimeoutError:
                     pass
+                elapsed = int(time.monotonic() - start)
+                overall = base_pct + last_sub_pct // total_videos
+                yield ProgressEvent(
+                    "video_analysis",
+                    min(overall, 99),
+                    f"{filename}: {last_msg} ({elapsed}s)",
+                )
+            # Drain any final messages queued after task completion
             while not q.empty():
-                yield ProgressEvent("video_analysis", pct, q.get_nowait())
+                last_msg, last_sub_pct = q.get_nowait()
+                overall = base_pct + last_sub_pct // total_videos
+                yield ProgressEvent(
+                    "video_analysis",
+                    min(overall, 99),
+                    f"{filename}: {last_msg}",
+                )
             result = await task
             project.videos.append(result)
             processed += 1
+            logger.info(
+                "Video %s analyzed in %.1fs",
+                filename, time.monotonic() - start,
+            )
 
         yield ProgressEvent("video_analysis", 100, "Video analysis complete")
 

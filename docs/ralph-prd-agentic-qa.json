@@ -1,0 +1,429 @@
+{
+  "project": "Walkthrough — Agentic QA + LLM Critics",
+  "branchName": "ralph/agentic-qa-v1",
+  "description": "Add per-phase gate artifacts, parallel QA phase (catches self-loops and output-schema regressions), reusable fidelity/authority prompt module, LLM critic wrappers over deterministic contradictions/narrative tools, and self-critique (v1 → surgical v2) on new LLM callsites. All new LLM features default-off behind Settings flags. Do NOT replace PhaseOrchestrator, do NOT migrate to claude-agent-sdk, do NOT wrap merge_paths/clarification/generate.py.",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Add phase_artifacts storage helper",
+      "description": "As a developer, I need a helper that writes/reads per-phase JSON artifacts next to the monolithic project JSON so subsequent phases (and QA validators) can read specific phase output.",
+      "acceptanceCriteria": [
+        "Create backend/src/walkthrough/storage/phase_artifacts.py",
+        "Expose: async def write_phase_artifact(project_id: str, phase: str, payload: dict) -> Path — writes to {Settings().LOCAL_DATA_DIR}/projects/{Settings().FIRESTORE_COLLECTION}/{project_id}/phases/{phase}.json; creates parent dirs; uses asyncio.to_thread for the write",
+        "Expose: async def read_phase_artifact(project_id: str, phase: str) -> dict | None — returns parsed JSON or None if absent",
+        "Expose: def phase_artifact_exists(project_id: str, phase: str) -> bool — sync existence check",
+        "Expose: def completed_phases(project_id: str) -> list[str] — returns phases in PHASE_ORDER (import from orchestrator or re-declare) whose artifact files exist, in PHASE_ORDER sequence",
+        "Create backend/tests/test_phase_artifacts.py with: (1) write+read roundtrip, (2) read_phase_artifact returns None when missing, (3) phase_artifact_exists False when missing, (4) completed_phases returns phases in correct order",
+        "Use a pytest tmp_path fixture or monkeypatch Settings().LOCAL_DATA_DIR to avoid touching real data dir",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 1,
+      "model": "sonnet",
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-002",
+      "title": "Wire artifact writes into orchestrator phase methods",
+      "description": "As a developer, I need each pipeline phase method to write its own structured artifact at completion so subsequent phases and QA validators can read the phase output directly.",
+      "acceptanceCriteria": [
+        "Modify backend/src/walkthrough/ai/orchestrator.py",
+        "Import write_phase_artifact from walkthrough.storage.phase_artifacts",
+        "At end of _run_path_merge: write 'path_merge' artifact with {\"decision_trees\": [t.model_dump(mode='json') for t in project.decision_trees]}",
+        "At end of _run_narrative: write 'narrative' artifact with same shape (trees now carry narratives)",
+        "At end of _run_contradictions: write 'contradictions' artifact with {\"gaps\": [g.model_dump(mode='json') for g in project.gaps]}",
+        "At end of _run_clarification: write 'clarification' artifact with {\"questions\": [q.model_dump(mode='json') for q in project.questions]}",
+        "Inside _run_generation, after generate_walkthrough returns: write 'generation' artifact with the full output dict",
+        "Do NOT write an ingestion artifact (per-video/PDF id checks already cover resume)",
+        "Keep existing self._save(project) calls untouched (monolith stays authoritative)",
+        "Typecheck passes",
+        "Tests pass (existing tests must still pass)"
+      ],
+      "priority": 2,
+      "model": "sonnet",
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-003",
+      "title": "Replace _infer_resume_phase with artifact-presence lookup",
+      "description": "As a developer, I need resume logic that relies on concrete artifact files instead of fragile state-matching heuristics so killed pipelines resume correctly.",
+      "acceptanceCriteria": [
+        "Modify backend/src/walkthrough/ai/orchestrator.py::_infer_resume_phase",
+        "Keep the status='complete' → 'done' branch and status='generating' → 'generation' branch exactly as today",
+        "Keep the status='clarifying' branch exactly as today (unresolved critical → 'clarification', else 'generation')",
+        "For the 'analyzing' / 'uploading' path: use completed_phases(project.project_id) to find the first phase in PHASE_ORDER whose artifact is absent. Fall back to 'ingestion' when no artifacts exist or project.videos + project.pdfs are both empty.",
+        "Import completed_phases from walkthrough.storage.phase_artifacts",
+        "Create backend/tests/test_orchestrator_resume.py with cases: (1) artifacts through narrative.json → returns 'contradictions', (2) artifacts through contradictions.json + status 'clarifying' + unresolved critical gaps → returns 'clarification', (3) no artifacts + empty project → returns 'ingestion', (4) status 'complete' → returns 'done'",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 3,
+      "model": "sonnet",
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-004",
+      "title": "Add QA report Pydantic models",
+      "description": "As a developer, I need typed models for QA findings so validators return a consistent shape and the orchestrator can serialize into project.walkthrough_output.",
+      "acceptanceCriteria": [
+        "Create backend/src/walkthrough/models/qa.py",
+        "ValidatorFinding(BaseModel): severity: Literal['critical','medium','low','info']; code: str; message: str; screen_id: str|None = None; evidence: list[SourceRef] = []",
+        "ValidatorResult(BaseModel): validator: str; ok: bool; findings: list[ValidatorFinding] = []",
+        "QAReport(BaseModel): project_id: str; results: list[ValidatorResult]; has_critical: bool; generated_at: datetime",
+        "Import SourceRef from walkthrough.models.workflow",
+        "Add re-exports to backend/src/walkthrough/models/__init__.py",
+        "Create backend/tests/test_qa_models.py: roundtrip each model via model_dump(mode='json') → model_validate; assert has_critical True when any finding severity=='critical'",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 4,
+      "model": "sonnet",
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-005",
+      "title": "Add decision_tree_structure validator",
+      "description": "As a developer, I need a pure-Python validator that catches structural issues in decision trees — specifically the self-loop bug and related defects — before they reach the UI.",
+      "acceptanceCriteria": [
+        "Create backend/src/walkthrough/ai/qa/__init__.py (empty)",
+        "Create backend/src/walkthrough/ai/qa/decision_tree_structure.py",
+        "Expose async def validate(project: Project) -> ValidatorResult",
+        "Detect 'self_loop' (severity critical): any branch where branch.paths[action] == branch.screen_id",
+        "Detect 'orphan_screen' (severity medium): screen that is not root and not any branch-path target in its tree",
+        "Detect 'unreachable_screen' (severity medium): BFS from tree.root_screen_id fails to reach the screen",
+        "Detect 'dangling_branch_target' (severity critical): branch path points at a screen_id absent from tree.screens",
+        "Each finding sets screen_id and a descriptive message",
+        "Return ValidatorResult(validator='decision_tree_structure', ok=not any(critical findings), findings=[...])",
+        "Create backend/tests/test_qa_decision_tree.py with fixture Projects producing each finding; include one test reproducing the known self-loop at screen_d3af07fa2d51",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 5,
+      "model": "sonnet",
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-006",
+      "title": "Add output_schema validator",
+      "description": "As a developer, I need a pure-Python validator that catches the generated-output field-name regressions (elements/ui_elements, stat field names) that broke the walkthrough page in the current session.",
+      "acceptanceCriteria": [
+        "Create backend/src/walkthrough/ai/qa/output_schema.py",
+        "Expose async def validate(project: Project) -> ValidatorResult",
+        "Load phases/generation.json via read_phase_artifact; if missing, return ValidatorResult(validator='output_schema', ok=False, findings=[ValidatorFinding(severity='critical', code='generation_artifact_missing', message='...')])",
+        "Detect 'missing_screen_field' (critical): screen dict missing screen_id, title, ui_elements, evidence_tier, or source_refs",
+        "Detect 'legacy_elements_key' (critical): screen has 'elements' key (regression for bug the user just fixed — generate.py should write 'ui_elements')",
+        "Detect 'bad_ui_element' (critical): element missing element_type or label",
+        "Detect 'warning_references_missing_screen' (medium): warnings[i].screen_id not in screens",
+        "Detect 'stats_field_mismatch' (critical): stats missing total_branches or open_questions, OR stats contains legacy 'total_branch_points' / 'open_questions_count' / 'warnings_count'",
+        "Create backend/tests/test_qa_output_schema.py with fixture artifacts for each finding",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 6,
+      "model": "sonnet",
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-007",
+      "title": "Add video_coverage validator",
+      "description": "As a developer, I need a pure-Python validator ensuring every observed screen has video evidence and every screen has at least one source reference.",
+      "acceptanceCriteria": [
+        "Create backend/src/walkthrough/ai/qa/video_coverage.py",
+        "Expose async def validate(project: Project) -> ValidatorResult",
+        "Iterate every WorkflowScreen across all decision_trees",
+        "Detect 'observed_without_video_ref' (critical): evidence_tier == 'observed' but no source_refs with source_type == 'video'",
+        "Detect 'screen_without_any_ref' (critical): len(source_refs) == 0",
+        "Return ValidatorResult with validator='video_coverage'",
+        "Create backend/tests/test_qa_video_coverage.py covering each finding",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 7,
+      "model": "sonnet",
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-008",
+      "title": "Add narrative_fidelity_critic (LLM validator, flag-gated)",
+      "description": "As a developer, I need an LLM validator that checks whether each screen's narrative claims are actually supported by its cited source excerpts, to catch hallucinated narrative.",
+      "acceptanceCriteria": [
+        "Add Settings.QA_ENABLE_LLM_CRITIC: bool = False and Settings.NARRATIVE_FIDELITY_MODEL: str = 'claude-haiku-4-5-20251001' to backend/src/walkthrough/config.py",
+        "Create backend/src/walkthrough/ai/qa/narrative_fidelity_critic.py",
+        "Expose async def validate(project: Project, *, client: anthropic.AsyncAnthropic | None = None) -> ValidatorResult",
+        "When Settings().QA_ENABLE_LLM_CRITIC is False: skip LLM calls, return ValidatorResult(validator='narrative_fidelity', ok=True, findings=[])",
+        "When True: iterate screens that have narrative; for each, build payload of {narrative: {what, why, when_condition}, excerpts: [{reference, excerpt} for r in source_refs]}",
+        "System prompt: 'You check if narrative text is supported by source excerpts. A claim is unsupported if no excerpt contains evidence for it. Paraphrase alone is NOT evidence — require overlap of specific nouns or UI labels. Output JSON: {\"unsupported_claims\": [{\"claim\": str, \"reason\": str}]}'",
+        "Use messages.create with model=Settings().NARRATIVE_FIDELITY_MODEL, max_tokens=1024, temperature=0.0",
+        "Each unsupported claim becomes ValidatorFinding(severity='medium', code='narrative_unsupported_claim', screen_id=..., message=claim + ' — ' + reason)",
+        "Create backend/tests/test_qa_narrative_fidelity.py with mocked AsyncAnthropic: (1) flag off returns empty without HTTP call, (2) flag on with mocked response emits findings",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 8,
+      "model": "opus",
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-009",
+      "title": "Add QA runner fan-out",
+      "description": "As a developer, I need a runner that invokes all QA validators in parallel and serializes a QAReport artifact.",
+      "acceptanceCriteria": [
+        "Create backend/src/walkthrough/ai/qa/runner.py",
+        "Expose async def run_qa(project: Project) -> QAReport",
+        "Collect validator callables: decision_tree_structure.validate, output_schema.validate, video_coverage.validate, narrative_fidelity_critic.validate",
+        "Run via asyncio.gather with return_exceptions=True",
+        "For any validator that raised: coerce to ValidatorResult(validator=<name>, ok=False, findings=[ValidatorFinding(severity='critical', code='validator_error', message=str(exc))])",
+        "has_critical = any(f.severity == 'critical' for r in results for f in r.findings)",
+        "Write phases/qa.json via write_phase_artifact(project.project_id, 'qa', report.model_dump(mode='json'))",
+        "Return QAReport(project_id=project.project_id, results=results, has_critical=has_critical, generated_at=datetime.now(timezone.utc))",
+        "Create backend/tests/test_qa_runner.py: (1) all validators ok → report.has_critical False; (2) one validator raises → structured error finding; (3) artifact file written",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 9,
+      "model": "sonnet",
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-010",
+      "title": "Add _run_qa phase to orchestrator",
+      "description": "As a developer, I need a new 'qa' phase after generation that runs the parallel validators and stashes the report on project.walkthrough_output so the frontend can surface findings.",
+      "acceptanceCriteria": [
+        "Modify backend/src/walkthrough/ai/orchestrator.py",
+        "Add 'qa' to PHASE_ORDER after 'generation'",
+        "Add Settings.QA_BLOCK_ON_CRITICAL: bool = False to backend/src/walkthrough/config.py",
+        "Add async def _run_qa(self, project: Project) -> AsyncGenerator[ProgressEvent, None]: yields ProgressEvent('qa', 0, 'Running QA validators...'), calls run_qa(project), stashes report.model_dump(mode='json') on project.walkthrough_output['qa_report'], yields ProgressEvent('qa', 100, f'QA complete — {sum(1 for r in report.results for f in r.findings if f.severity==\"critical\")} critical findings')",
+        "Wire _run_qa inside run_pipeline: run after _run_generation when _phase_index(resume) <= _phase_index('qa')",
+        "Respect QA_BLOCK_ON_CRITICAL: if True and report.has_critical, set project.status = 'qa_blocked' instead of 'complete' (add 'qa_blocked' to the Project status Literal in backend/src/walkthrough/models/project.py)",
+        "Call self._save(project) after _run_qa",
+        "Create backend/tests/test_orchestrator_qa_phase.py: run an end-to-end fixture project through QA phase, assert qa.json written and project.walkthrough_output['qa_report'] populated",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 10,
+      "model": "sonnet",
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-011",
+      "title": "Add qa_report typedef to frontend WalkthroughOutput",
+      "description": "As a developer, I need the frontend type system to allow qa_report on WalkthroughOutput so backend can emit without breaking typecheck (no UI yet).",
+      "acceptanceCriteria": [
+        "Modify frontend/src/types/index.ts",
+        "Add interface QAValidatorFinding { severity: 'critical' | 'medium' | 'low' | 'info'; code: string; message: string; screen_id?: string | null; evidence: SourceRef[] }",
+        "Add interface QAValidatorResult { validator: string; ok: boolean; findings: QAValidatorFinding[] }",
+        "Add interface QAReport { project_id: string; results: QAValidatorResult[]; has_critical: boolean; generated_at: string }",
+        "Extend WalkthroughOutput with optional qa_report?: QAReport",
+        "Add a TODO comment in frontend/src/pages/WalkthroughPage.tsx just above the closing </div> of the return: '// TODO: render QA report UI (US-011 stub — type only)'",
+        "cd frontend && npm run build or tsc --noEmit passes",
+        "Typecheck passes"
+      ],
+      "priority": 11,
+      "model": "sonnet",
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-012",
+      "title": "Create fidelity prompt module",
+      "description": "As a developer, I need a reusable prompt-blocks module so every future LLM callsite composes its system prompt from the same invariants and rules.",
+      "acceptanceCriteria": [
+        "Create backend/src/walkthrough/ai/prompts/__init__.py (empty)",
+        "Create backend/src/walkthrough/ai/prompts/fidelity.py exporting four string constants",
+        "FIDELITY_STANDARD — hard rules: no inference; quoted excerpts only; if source is unreadable, return literal '__unreadable__' and stop; reference the evidence explicitly",
+        "INVARIANTS — copy M1-M9 and N1-N7 verbatim from backend/src/walkthrough/ai/agent.py:40-76",
+        "AUTHORITY_HIERARCHY — state: 'Video (tier 1, direct observation) > SOP PDF (tier 2, authoritative documentation) > training narration (tier 3, instructor commentary). This hierarchy guides evidence weighting and UI presentation order ONLY. Do NOT silently resolve disagreements (see N4 / N2). Surface them as Gaps with evidence from at least two sources.'",
+        "EVIDENCE_CITATION_RULES — every claim ties to a SourceRef; excerpts ≤200 chars; no paraphrasing in citations; citations include source_type + reference + excerpt",
+        "Create backend/tests/test_prompts.py asserting each constant is non-empty, is str, contains key markers ('authority' in AUTHORITY_HIERARCHY; '__unreadable__' in FIDELITY_STANDARD; 'M1' in INVARIANTS; 'SourceRef' in EVIDENCE_CITATION_RULES)",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 12,
+      "model": "opus",
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-013",
+      "title": "Create deterministic prompt composer",
+      "description": "As a developer, I need a function that composes system prompts from fidelity blocks in a deterministic order so prompt caching works.",
+      "acceptanceCriteria": [
+        "Create backend/src/walkthrough/ai/prompts/compose.py",
+        "def compose_system_prompt(*blocks: str, task: str) -> str — joins blocks with '\\n\\n---\\n\\n', appends task at the end prefixed by '\\n\\n## Task\\n\\n'",
+        "Raises ValueError if task is empty or whitespace-only",
+        "Same inputs always produce byte-identical output (no timestamps, no random content)",
+        "Does NOT accept dynamic payload content — dynamic content belongs in the user message for prompt-cache stability",
+        "Extend backend/tests/test_prompts.py: (1) compose same args twice → identical strings; (2) empty task → ValueError; (3) composed output contains every block plus the task",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 13,
+      "model": "opus",
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-014",
+      "title": "Tombstone unwired agent.py",
+      "description": "As a developer, I need agent.py marked as scaffolding-only so nobody accidentally revives it as the entry point.",
+      "acceptanceCriteria": [
+        "Modify backend/src/walkthrough/ai/agent.py",
+        "Prepend module docstring: '\"\"\"SCAFFOLDING ONLY — not wired. Invariants harvested into ai/prompts/fidelity.py. PhaseOrchestrator in orchestrator.py is the live pipeline driver. Do not import WalkthroughAgent in new code.\"\"\"'",
+        "Preserve existing SYSTEM_PROMPT and class definitions exactly — other code may still harvest them",
+        "Verify file still imports: python -c 'import walkthrough.ai.agent' succeeds (if run via uv run)",
+        "Typecheck passes"
+      ],
+      "priority": 14,
+      "model": "sonnet",
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-015",
+      "title": "Create shared Anthropic client helper",
+      "description": "As a developer, I need a single Anthropic client factory with a structured-JSON helper so every critic shares the same retry, caching, and schema-validation logic.",
+      "acceptanceCriteria": [
+        "Create backend/src/walkthrough/ai/llm/__init__.py (empty)",
+        "Create backend/src/walkthrough/ai/llm/client.py",
+        "def get_client() -> anthropic.AsyncAnthropic — reads ANTHROPIC_API_KEY from Settings; raises if unset only when actually called (module import must not fail)",
+        "async def run_structured_json(client, *, model: str, system: str, user: str, schema: type[BaseModel], max_tokens: int = 4096, max_retries: int = 2) -> BaseModel — calls messages.create with system=[{type: 'text', text: system, cache_control: {type: 'ephemeral'}}] for prompt caching; extracts the text content; attempts schema.model_validate_json; on failure, retries up to max_retries with a reminder message 'Return ONLY valid JSON per the schema; no markdown fencing'; raises ValueError if exhausted",
+        "Create backend/tests/test_llm_client.py with a mocked AsyncAnthropic: (1) happy path; (2) invalid JSON once then valid; (3) exhausted retries raises ValueError",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 15,
+      "model": "sonnet",
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-016",
+      "title": "Create detect_contradictions_critic (LLM)",
+      "description": "As a developer, I need an LLM critic that reads existing deterministic gaps plus raw source data and emits additional contradictions the heuristic detector may have missed.",
+      "acceptanceCriteria": [
+        "Add Settings.CONTRADICTION_CRITIC_MODEL: str = 'claude-sonnet-4-6' to backend/src/walkthrough/config.py",
+        "Create backend/src/walkthrough/ai/tools/detect_contradictions_critic.py",
+        "Expose async def critique_contradictions(videos: list[VideoAnalysis], pdfs: list[PDFExtraction], decision_trees: list[DecisionTree], existing_gaps: list[Gap]) -> list[Gap]",
+        "Build system prompt via compose_system_prompt(FIDELITY_STANDARD, INVARIANTS, AUTHORITY_HIERARCHY, EVIDENCE_CITATION_RULES, task='Compare UI labels across videos, PDF sections, and audio excerpts. Identify contradictions the deterministic detector may have missed. Output JSON: {\"gaps\": [{\"gap_id\": str, \"severity\": \"critical|medium|low\", \"description\": str, \"evidence\": [SourceRef-like dicts from >=2 sources]}]}')",
+        "User payload: compact JSON of video UI labels per timestamp, PDF section titles + excerpts, audio transcript segments, and existing_gaps (so the LLM avoids duplicating)",
+        "Use run_structured_json with a LLMGapsResponse Pydantic model (gaps: list[Gap])",
+        "Post-process: reuse _deduplicate_gaps from backend/src/walkthrough/ai/tools/detect_contradictions.py (import it) to filter duplicates against existing_gaps",
+        "If QA_ENABLE_LLM_CRITIC is False, return empty list without making any LLM call",
+        "Create backend/tests/test_contradictions_critic.py with mocked AsyncAnthropic: (1) flag off → empty; (2) flag on + video shows 'Submit' and PDF says 'Send' → returns a medium-severity Gap not in existing_gaps",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 16,
+      "model": "opus",
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-017",
+      "title": "Wire contradictions critic into _run_contradictions",
+      "description": "As a developer, I need the orchestrator to call the LLM critic additively so critic-emitted gaps augment (not replace) deterministic gaps.",
+      "acceptanceCriteria": [
+        "Modify backend/src/walkthrough/ai/orchestrator.py::_run_contradictions",
+        "Call deterministic detect_contradictions as today → existing_gaps",
+        "When Settings().QA_ENABLE_LLM_CRITIC is True: call critique_contradictions(videos, pdfs, decision_trees, existing_gaps) → additional_gaps",
+        "project.gaps = _deduplicate_gaps(existing_gaps + additional_gaps) — import _deduplicate_gaps from the existing detect_contradictions module",
+        "When flag is False: behavior identical to before this PR",
+        "Create backend/tests/test_orchestrator_critics.py: (1) flag off → gaps count unchanged; (2) flag on with mocked critic → gaps count includes critic additions",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 17,
+      "model": "sonnet",
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-018",
+      "title": "Create narrative_critic (LLM)",
+      "description": "As a developer, I need an LLM critic that reviews synthesized narrative against cited source excerpts and emits gaps for unsupported claims.",
+      "acceptanceCriteria": [
+        "Add Settings.NARRATIVE_CRITIC_MODEL: str = 'claude-sonnet-4-6' to backend/src/walkthrough/config.py",
+        "Create backend/src/walkthrough/ai/tools/narrative_critic.py",
+        "Expose async def critique_narratives(decision_trees: list[DecisionTree]) -> list[Gap]",
+        "For each screen with narrative, send (narrative.what + narrative.why + narrative.when_condition + source_refs excerpts) to the model",
+        "System prompt composed via compose_system_prompt(FIDELITY_STANDARD, EVIDENCE_CITATION_RULES, task='Identify narrative claims not supported by the listed source excerpts. Output JSON: {\"unsupported\": [{\"screen_id\": str, \"claim\": str, \"reason\": str}]}')",
+        "Each unsupported entry becomes Gap(gap_id=hash-based id, severity='medium', description=f'Narrative claim unsupported on {screen_id}: {claim}', evidence=[SourceRef(source_type='video', reference=screen_id, excerpt=reason)])",
+        "If QA_ENABLE_LLM_CRITIC is False, return []",
+        "Create backend/tests/test_narrative_critic.py with mocked AsyncAnthropic",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 18,
+      "model": "opus",
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-019",
+      "title": "Wire narrative critic into _run_narrative",
+      "description": "As a developer, I need the orchestrator to run the narrative critic additively after narrative synthesis so any unsupported claims surface as gaps.",
+      "acceptanceCriteria": [
+        "Modify backend/src/walkthrough/ai/orchestrator.py::_run_narrative",
+        "After synthesize_narrative returns: if Settings().QA_ENABLE_LLM_CRITIC, call critique_narratives(project.decision_trees) → additional_gaps",
+        "Append additional_gaps to project.gaps (do NOT overwrite; contradictions phase runs later and will de-dup with its own additions)",
+        "When flag is False: behavior identical",
+        "Extend backend/tests/test_orchestrator_critics.py with a narrative-critic case",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 19,
+      "model": "sonnet",
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-020",
+      "title": "Create surgical_review helper",
+      "description": "As a developer, I need a reusable 'v1 → surgical v2' review helper so LLM critic output can be self-checked idempotently.",
+      "acceptanceCriteria": [
+        "Add Settings.ENABLE_SELF_CRITIQUE: bool = False and Settings.SELF_CRITIQUE_MODEL: str = 'claude-sonnet-4-6' to backend/src/walkthrough/config.py",
+        "Create backend/src/walkthrough/ai/llm/review_pass.py",
+        "async def surgical_review(client: anthropic.AsyncAnthropic, *, model: str, v1_output: dict, source_excerpts: list[str], schema: type[BaseModel]) -> dict",
+        "System prompt: review v1 for unsupported claims, missing citations, hallucinated labels; output JSON {edits: [{path: str, operation: 'replace'|'remove'|'add', new_value: any}]}; empty edits list means v1 is already correct (idempotence)",
+        "Apply edits to a deep-copy of v1_output using simple dotted-path logic; validate against schema; return v2",
+        "When ENABLE_SELF_CRITIQUE is False, return v1_output unchanged",
+        "Create backend/tests/test_review_pass.py: (1) flag off → v1 unchanged; (2) flag on with mocked response emitting edits → v2 differs; (3) running surgical_review on v2 with same mock returning empty edits → v3 == v2 (idempotence)",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 20,
+      "model": "opus",
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-021",
+      "title": "Thread surgical_review into all three critics",
+      "description": "As a developer, I need each new LLM critic to run a self-critique pass when ENABLE_SELF_CRITIQUE is true so the emitted gaps are higher quality.",
+      "acceptanceCriteria": [
+        "Modify backend/src/walkthrough/ai/qa/narrative_fidelity_critic.py to call surgical_review on its v1 JSON response before converting to findings, when Settings().ENABLE_SELF_CRITIQUE is True",
+        "Modify backend/src/walkthrough/ai/tools/detect_contradictions_critic.py similarly",
+        "Modify backend/src/walkthrough/ai/tools/narrative_critic.py similarly",
+        "Pass source_excerpts built from the same payload the v1 call received",
+        "Extend backend/tests/test_qa_narrative_fidelity.py, test_contradictions_critic.py, test_narrative_critic.py with a flag-on case where the review pass produces a different v2 than v1",
+        "With flag off: identical behavior to before",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 21,
+      "model": "opus",
+      "passes": false,
+      "notes": ""
+    }
+  ]
+}

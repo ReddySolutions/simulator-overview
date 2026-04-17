@@ -17,9 +17,7 @@ from sse_starlette.sse import EventSourceResponse
 from starlette.requests import Request
 
 from walkthrough.ai.orchestrator import PhaseOrchestrator, ProgressEvent
-from walkthrough.config import Settings
-from walkthrough.storage.firestore import FirestoreClient
-from walkthrough.storage.gcs import GCSClient
+from walkthrough.deps import get_firestore_client, get_storage_client
 
 logger = logging.getLogger(__name__)
 
@@ -62,16 +60,13 @@ class AnalyzeResponse(BaseModel):
 # --- Helpers ---
 
 
-def _get_clients() -> tuple[GCSClient, FirestoreClient]:
-    settings = Settings()
-    gcs = GCSClient(bucket_name=settings.GCS_BUCKET)
-    fs = FirestoreClient(collection=settings.FIRESTORE_COLLECTION)
-    return gcs, fs
+def _get_clients():  # type: ignore[no-untyped-def]
+    return get_storage_client(), get_firestore_client()
 
 
-async def _has_required_files(gcs: GCSClient, project_id: str) -> bool:
+async def _has_required_files(storage: Any, project_id: str) -> bool:
     """Check that at least one MP4 and one PDF have been uploaded."""
-    blobs = await gcs.list_blobs(f"projects/{project_id}/uploads/")
+    blobs = await storage.list_blobs(f"projects/{project_id}/uploads/")
     has_mp4 = any(b.lower().endswith(".mp4") for b in blobs)
     has_pdf = any(b.lower().endswith(".pdf") for b in blobs)
     return has_mp4 and has_pdf
@@ -173,9 +168,9 @@ async def analyze_project(project_id: str) -> AnalyzeResponse:
         )
 
     if project_id in _active_pipelines:
-        raise HTTPException(
-            status_code=409,
-            detail="Analysis is already running for this project",
+        return AnalyzeResponse(
+            project_id=project_id,
+            message="Analysis already running",
         )
 
     queue: asyncio.Queue[ProgressEvent | None] = asyncio.Queue()

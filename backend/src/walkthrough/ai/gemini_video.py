@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+from collections.abc import Awaitable, Callable
 
 import vertexai
 from google.api_core.exceptions import ResourceExhausted
@@ -77,12 +78,21 @@ the intent (what concept or procedure the speaker is explaining).
 """
 
 
-async def analyze_video(video_path: str, video_id: str) -> VideoAnalysis:
+ProgressCallback = Callable[[str, int], Awaitable[None]]
+
+
+async def analyze_video(
+    video_path: str,
+    video_id: str,
+    on_progress: ProgressCallback | None = None,
+) -> VideoAnalysis:
     """Analyze a video using Gemini and extract structured perception data.
 
     Args:
         video_path: GCS URI (gs://...) to the MP4 file.
         video_id: Unique identifier for this video.
+        on_progress: Optional async callback invoked with (message, sub_pct),
+            where sub_pct is 0-100 within this single video's analysis.
 
     Returns:
         VideoAnalysis with extracted keyframes, transitions, audio, and flow.
@@ -102,10 +112,21 @@ async def analyze_video(video_path: str, video_id: str) -> VideoAnalysis:
         temperature=0.1,
     )
 
+    async def _emit(msg: str, pct: int) -> None:
+        logger.info("[%s] %d%% %s", video_id, pct, msg)
+        if on_progress:
+            await on_progress(msg, pct)
+
+    await _emit("Sending video to Gemini", 10)
     prompt_part = Part.from_text(EXTRACTION_PROMPT)
     content = Content(role="user", parts=[video_part, prompt_part])
-    response_text = await _call_with_retries(model, [content], generation_config)
 
+    await _emit("Extracting structured data with AI", 40)
+    response_text = await _call_with_retries(
+        model, [content], generation_config, _emit,
+    )
+
+    await _emit("Parsing Gemini response", 95)
     filename = os.path.basename(video_path)
     return _parse_response(response_text, video_id, filename)
 
@@ -114,6 +135,7 @@ async def _call_with_retries(
     model: GenerativeModel,
     contents: list[Content],
     generation_config: GenerationConfig,
+    on_progress: ProgressCallback | None = None,
 ) -> str:
     """Call Gemini with exponential backoff on rate limits."""
     for attempt in range(MAX_RETRIES):
@@ -138,6 +160,12 @@ async def _call_with_retries(
                 attempt + 1,
                 MAX_RETRIES,
             )
+            if on_progress:
+                await on_progress(
+                    f"Rate limit hit, retrying in {wait}s "
+                    f"(attempt {attempt + 2}/{MAX_RETRIES})",
+                    40,
+                )
             await asyncio.sleep(wait)
 
     raise ResourceExhausted("Rate limit exceeded after retries")

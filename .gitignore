@@ -1,3 +1,7 @@
 # Ralph symlinks (point to ~/.claude/skills/ralph/)
 prd.json
 progress.txt
+
+# Local dev data and env
+backend/.env.local
+backend/data/

@@ -6,10 +6,9 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, UploadFile
 from pydantic import BaseModel
 
-from walkthrough.config import Settings
+from walkthrough.deps import get_firestore_client, get_storage_client
 from walkthrough.models.project import Project
-from walkthrough.storage.firestore import FirestoreClient
-from walkthrough.storage.gcs import ALLOWED_CONTENT_TYPES, GCSClient
+from walkthrough.storage.constants import ALLOWED_CONTENT_TYPES
 
 router = APIRouter(prefix="/api/projects", tags=["upload"])
 
@@ -40,11 +39,8 @@ class UploadResponse(BaseModel):
     ready_for_analysis: bool
 
 
-def _get_clients() -> tuple[GCSClient, FirestoreClient]:
-    settings = Settings()
-    gcs = GCSClient(bucket_name=settings.GCS_BUCKET)
-    fs = FirestoreClient(collection=settings.FIRESTORE_COLLECTION)
-    return gcs, fs
+def _get_clients():  # type: ignore[no-untyped-def]
+    return get_storage_client(), get_firestore_client()
 
 
 @router.post("", response_model=CreateProjectResponse)
