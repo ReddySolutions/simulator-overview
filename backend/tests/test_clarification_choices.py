@@ -120,3 +120,91 @@ class TestChoiceGeneration:
             resolved=True,
         )
         assert await generate_questions([gap]) == []
+
+
+class TestSeverityRebalance:
+    """The upstream classifier dumps almost everything into 'medium'; the
+    post-generation rebalancer uses impact score to re-distribute."""
+
+    async def test_flat_medium_bucket_gets_spread_across_tiers(self):
+        from walkthrough.models.workflow import (
+            DecisionTree,
+            WorkflowScreen,
+        )
+
+        # Build 30 medium gaps; one keyframe reference is shared by many
+        # screens (high impact), another by almost none (low impact).
+        high_refs = [
+            SourceRef(source_type="video", reference=f"v.mp4:00:{i:02d}", excerpt="high")
+            for i in range(1, 6)  # gaps 1-5 get the high-impact refs
+        ]
+        low_refs = [
+            SourceRef(source_type="video", reference=f"v.mp4:99:{i:02d}", excerpt="low")
+            for i in range(1, 6)  # gaps 26-30 get the low-impact refs
+        ]
+        mid_refs = [
+            SourceRef(source_type="video", reference=f"v.mp4:05:{i:02d}", excerpt="mid")
+            for i in range(1, 21)
+        ]
+
+        gaps: list[Gap] = []
+        for i, ref in enumerate(high_refs + mid_refs + low_refs):
+            gaps.append(
+                Gap(
+                    gap_id=f"g{i}",
+                    severity="medium",
+                    description=f"gap {i}",
+                    evidence=[
+                        ref,
+                        SourceRef(
+                            source_type="pdf", reference="SOP.pdf:s1", excerpt="x",
+                        ),
+                    ],
+                )
+            )
+
+        # Decision tree with many screens referencing the high-impact refs,
+        # a few referencing the mid-impact refs, and none referencing the low-impact ones.
+        screens: dict[str, WorkflowScreen] = {}
+        for i, ref in enumerate(high_refs):
+            for copy in range(10):  # 10 screens cite each high-impact ref
+                sid = f"hi_{i}_{copy}"
+                screens[sid] = WorkflowScreen(
+                    screen_id=sid, title="t", ui_elements=[],
+                    evidence_tier="observed", source_refs=[ref],
+                )
+        for i, ref in enumerate(mid_refs):
+            sid = f"mid_{i}"
+            screens[sid] = WorkflowScreen(
+                screen_id=sid, title="t", ui_elements=[],
+                evidence_tier="observed", source_refs=[ref],
+            )
+        tree = DecisionTree(root_screen_id="hi_0_0", screens=screens, branches=[])
+
+        questions = await generate_questions(gaps, [tree])
+
+        severities = [q.severity for q in questions]
+        assert "critical" in severities, "expected at least one critical after rebalance"
+        assert "low" in severities, "expected at least one low after rebalance"
+        # Most should still be medium — rebalance only moves ~14% each direction
+        assert severities.count("medium") > severities.count("critical")
+        assert severities.count("medium") > severities.count("low")
+
+    async def test_small_projects_skip_rebalance(self):
+        from walkthrough.models.workflow import DecisionTree
+
+        gaps = [
+            Gap(
+                gap_id=f"g{i}",
+                severity="medium",
+                description=f"g{i}",
+                evidence=[_ref("video", "x"), _ref("pdf", "y", "SOP.pdf:1")],
+            )
+            for i in range(5)
+        ]
+        tree = DecisionTree(root_screen_id="r", screens={}, branches=[])
+
+        questions = await generate_questions(gaps, [tree])
+
+        # Below 10 mediums → no rebalance
+        assert all(q.severity == "medium" for q in questions)

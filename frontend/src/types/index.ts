@@ -269,7 +269,13 @@ export interface MetaQuestion {
   text: string;
   rationale: string;
   affected_gap_ids: string[];
+  choices: Choice[];
   answer: string | null;
+}
+
+export interface MetaAnswerResult {
+  meta_question: MetaQuestion;
+  resolved_question_ids: string[];
 }
 
 export interface BestGuessResponse {

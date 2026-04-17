@@ -68,11 +68,18 @@ class MetaQuestionResponse(BaseModel):
     text: str
     rationale: str
     affected_gap_ids: list[str]
+    choices: list[ChoiceResponse] = []
     answer: str | None
 
 
 class MetaAnswerRequest(BaseModel):
     answer: str
+    cascade: bool = True  # Apply to every affected question too
+
+
+class MetaAnswerResult(BaseModel):
+    meta_question: MetaQuestionResponse
+    resolved_question_ids: list[str]
 
 
 class BestGuessResponse(BaseModel):
@@ -352,6 +359,10 @@ async def list_meta_questions(project_id: str) -> list[MetaQuestionResponse]:
             text=mq.text,
             rationale=mq.rationale,
             affected_gap_ids=mq.affected_gap_ids,
+            choices=[
+                ChoiceResponse(label=c.label, description=c.description)
+                for c in mq.choices
+            ],
             answer=mq.answer,
         )
         for mq in project.meta_questions
@@ -360,20 +371,27 @@ async def list_meta_questions(project_id: str) -> list[MetaQuestionResponse]:
 
 @router.post(
     "/{project_id}/meta-questions/{meta_question_id}/answer",
-    response_model=MetaQuestionResponse,
+    response_model=MetaAnswerResult,
 )
 async def answer_meta_question(
     project_id: str,
     meta_question_id: str,
     body: MetaAnswerRequest,
-) -> MetaQuestionResponse:
-    """Record an answer to a meta-question.
+) -> MetaAnswerResult:
+    """Record an answer to a meta-question and (optionally) cascade it.
 
-    The answer is stored on the meta-question itself. Individual gaps are
-    NOT auto-resolved — the next analysis pass (after the client supplies
-    the missing input) will re-run contradiction detection and drop gaps
-    that no longer apply.
+    When cascade=True (default), every gap the meta-question claims to
+    cover is marked resolved with the meta-answer, and the matching
+    clarification questions inherit the answer prefixed with
+    '[Big Picture]' for traceability. This is why answering a meta-
+    question collapses the open-question count in the UI.
+
+    The cascade is a side-effect users can reverse by editing individual
+    questions afterward — the traceability prefix makes it obvious which
+    answers came from the Big Picture step.
     """
+    from walkthrough.ai.tools.clarification import _question_id
+
     fs = _get_firestore()
     project = await fs.load_project(project_id)
     if project is None:
@@ -391,14 +409,39 @@ async def answer_meta_question(
         raise HTTPException(status_code=404, detail="Meta-question not found")
 
     target.answer = body.answer
+
+    resolved_question_ids: list[str] = []
+    if body.cascade and target.affected_gap_ids:
+        cascaded_answer = f"[Big Picture] {body.answer}"
+        affected = set(target.affected_gap_ids)
+        for gap in project.gaps:
+            if gap.gap_id not in affected:
+                continue
+            gap.resolution = cascaded_answer
+            gap.resolved = True
+        # Match questions back to gaps via the same id derivation used at
+        # question-generation time.
+        affected_qids = {_question_id(gap_id) for gap_id in affected}
+        for q in project.questions:
+            if q.question_id in affected_qids and q.answer is None:
+                q.answer = cascaded_answer
+                resolved_question_ids.append(q.question_id)
+
     await fs.save_project(project)
 
-    return MetaQuestionResponse(
-        meta_question_id=target.meta_question_id,
-        text=target.text,
-        rationale=target.rationale,
-        affected_gap_ids=target.affected_gap_ids,
-        answer=target.answer,
+    return MetaAnswerResult(
+        meta_question=MetaQuestionResponse(
+            meta_question_id=target.meta_question_id,
+            text=target.text,
+            rationale=target.rationale,
+            affected_gap_ids=target.affected_gap_ids,
+            choices=[
+                ChoiceResponse(label=c.label, description=c.description)
+                for c in target.choices
+            ],
+            answer=target.answer,
+        ),
+        resolved_question_ids=resolved_question_ids,
     )
 
 

@@ -20,7 +20,7 @@ import logging
 from typing import Any
 
 from walkthrough.config import Settings
-from walkthrough.models.project import Gap, MetaQuestion
+from walkthrough.models.project import Choice, Gap, MetaQuestion
 from walkthrough.models.pdf import PDFExtraction
 from walkthrough.models.video import VideoAnalysis
 
@@ -56,7 +56,10 @@ Return ONLY valid JSON with this schema:
     {{
       "text": "<the umbrella question as you'd ask the client>",
       "rationale": "<1-2 sentences on why answering this unlocks many gaps>",
-      "affected_gap_ids": ["<gap_id>", "..."]
+      "affected_gap_ids": ["<gap_id>", "..."],
+      "choices": [
+        {{"label": "<short option>", "description": "<optional 1-line elaboration>"}}
+      ]
     }}
   ]
 }}
@@ -68,6 +71,15 @@ IMPORTANT RULES:
 only 1-2 gaps is not worth asking separately.
 - If the gap list is small or heterogeneous, return an empty meta_questions \
 array — don't force umbrella questions where they don't exist.
+- Include `choices` (2-4 options) when the question has a clean discrete \
+answer space. Examples:
+  * Missing-input questions → ["Yes, I can provide", "No, leave unanswerable", \
+"The flow doesn't exist in practice"]
+  * Source-preference questions → ["Always prefer video", "Always prefer PDF", \
+"Case by case"]
+  * PDF-coverage questions → ["PDF covers every screen", "PDF is a summary only"]
+- Omit `choices` or return an empty array when the answer is genuinely \
+open-ended (e.g. "describe the exception process").
 - No markdown fencing. No commentary. JSON only.\
 """
 
@@ -182,12 +194,26 @@ def _parse_meta_questions(
             # Meta-question that covers nothing real isn't useful.
             continue
 
+        raw_choices = entry.get("choices") or []
+        choices: list[Choice] = []
+        for c in raw_choices[:4]:
+            if not isinstance(c, dict):
+                continue
+            label = (c.get("label") or "").strip()
+            if not label:
+                continue
+            desc = c.get("description")
+            choices.append(
+                Choice(label=label, description=desc.strip() if isinstance(desc, str) else None),
+            )
+
         out.append(
             MetaQuestion(
                 meta_question_id=_meta_id(text_field),
                 text=text_field,
                 rationale=rationale,
                 affected_gap_ids=affected,
+                choices=choices,
             )
         )
     return out

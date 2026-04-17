@@ -114,6 +114,39 @@ def _impact_score(gap: Gap, decision_trees: list[DecisionTree]) -> int:
     return hits if hits > 0 else len(gap.evidence)
 
 
+def _rebalance_severity(
+    gaps: list[Gap], decision_trees: list[DecisionTree],
+) -> None:
+    """Spread a flat severity distribution across critical/medium/low.
+
+    The upstream contradiction detector classifies nearly every
+    label-mismatch gap as 'medium' because the signal keywords all
+    resolve to the middle bucket. That produces the '95 mediums, 0
+    criticals, 0 lows' problem users see. Re-rank the medium-bucket
+    gaps by impact_score and promote the top ~15% to critical, demote
+    the bottom ~15% to low. Critical/low already set by the upstream
+    classifier are left alone — they have explicit signal we trust.
+
+    Mutates gaps in place.
+    """
+    if not decision_trees:
+        return
+
+    mediums = [g for g in gaps if g.severity == "medium"]
+    if len(mediums) < 10:
+        # Small projects don't need the spread — one bucket is fine.
+        return
+
+    scored = sorted(mediums, key=lambda g: _impact_score(g, decision_trees), reverse=True)
+    top_cut = max(1, len(scored) // 7)  # ~14%
+    bottom_cut = max(1, len(scored) // 7)
+
+    for g in scored[:top_cut]:
+        g.severity = "critical"
+    for g in scored[-bottom_cut:]:
+        g.severity = "low"
+
+
 async def generate_questions(
     gaps: list[Gap],
     decision_trees: list[DecisionTree] | None = None,
@@ -151,9 +184,14 @@ async def generate_questions(
             )
         ]
 
+    # Rebalance severity before generating questions, so the UI's Critical
+    # / Medium / Low tabs get a meaningful distribution instead of a single
+    # flat bucket.
+    trees = decision_trees or []
+    _rebalance_severity(gaps, trees)
+
     # Convert gaps to questions, skipping already-resolved gaps. Capture the
     # gap alongside each question so we can compute impact-based ranking below.
-    trees = decision_trees or []
     paired: list[tuple[ClarificationQuestion, Gap]] = []
     for gap in gaps:
         if gap.resolved:

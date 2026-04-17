@@ -259,17 +259,17 @@ export default function ClarificationPage() {
     [id],
   );
 
-  const handleMetaAnswer = useCallback(
-    async (metaQuestionId: string) => {
+  const submitMetaAnswer = useCallback(
+    async (metaQuestionId: string, answer: string) => {
       if (!id) return;
-      const draft = metaDrafts[metaQuestionId]?.trim();
-      if (!draft) return;
+      const trimmed = answer.trim();
+      if (!trimmed) return;
       setMetaBusy((prev) => ({ ...prev, [metaQuestionId]: true }));
       try {
-        const updated = await answerMetaQuestion(id, metaQuestionId, draft);
+        const result = await answerMetaQuestion(id, metaQuestionId, trimmed);
         setMetaQuestions((prev) =>
           prev.map((m) =>
-            m.meta_question_id === metaQuestionId ? updated : m,
+            m.meta_question_id === metaQuestionId ? result.meta_question : m,
           ),
         );
         setMetaDrafts((prev) => {
@@ -277,6 +277,11 @@ export default function ClarificationPage() {
           delete next[metaQuestionId];
           return next;
         });
+        // The cascade may have resolved many per-question items; refetch so
+        // the severity tab counts and question cards reflect the new state.
+        if (result.resolved_question_ids.length > 0) {
+          await fetchData();
+        }
       } catch (err) {
         setError(
           err instanceof Error ? err.message : "Failed to save meta-answer",
@@ -285,7 +290,22 @@ export default function ClarificationPage() {
         setMetaBusy((prev) => ({ ...prev, [metaQuestionId]: false }));
       }
     },
-    [id, metaDrafts],
+    [id, fetchData],
+  );
+
+  const handleMetaAnswer = useCallback(
+    async (metaQuestionId: string) => {
+      const draft = metaDrafts[metaQuestionId] ?? "";
+      await submitMetaAnswer(metaQuestionId, draft);
+    },
+    [metaDrafts, submitMetaAnswer],
+  );
+
+  const handleMetaChoice = useCallback(
+    async (metaQuestionId: string, label: string) => {
+      await submitMetaAnswer(metaQuestionId, label);
+    },
+    [submitMetaAnswer],
   );
 
   const handleGenerate = useCallback(async () => {
@@ -491,33 +511,68 @@ export default function ClarificationPage() {
                         <p className="text-sm text-green-800">{mq.answer}</p>
                       </div>
                     ) : (
-                      <div className="mt-2 flex gap-2">
-                        <input
-                          type="text"
-                          placeholder="What did the client say?"
-                          value={metaDrafts[mq.meta_question_id] ?? ""}
-                          onChange={(e) =>
-                            setMetaDrafts((prev) => ({
-                              ...prev,
-                              [mq.meta_question_id]: e.target.value,
-                            }))
-                          }
-                          disabled={busy}
-                          className="flex-1 rounded-md border border-gray-300 px-3 py-1.5 text-sm placeholder:text-gray-400 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 disabled:opacity-50"
-                        />
-                        <button
-                          type="button"
-                          disabled={
-                            busy ||
-                            !(metaDrafts[mq.meta_question_id]?.trim())
-                          }
-                          onClick={() =>
-                            handleMetaAnswer(mq.meta_question_id)
-                          }
-                          className="rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                        >
-                          {busy ? "Saving..." : "Save"}
-                        </button>
+                      <div className="mt-3 space-y-2">
+                        {mq.choices.length > 0 && (
+                          <div className="grid gap-2">
+                            {mq.choices.map((c, idx) => (
+                              <button
+                                key={idx}
+                                type="button"
+                                disabled={busy}
+                                onClick={() =>
+                                  handleMetaChoice(mq.meta_question_id, c.label)
+                                }
+                                className="group text-left rounded-md border border-indigo-200 bg-white px-3 py-2 hover:border-indigo-400 hover:bg-indigo-100 focus:outline-none focus:ring-2 focus:ring-indigo-400 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                              >
+                                <span className="flex items-center gap-2">
+                                  <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-indigo-300 text-xs font-semibold text-indigo-600">
+                                    {idx + 1}
+                                  </span>
+                                  <span className="text-sm font-medium text-gray-900">
+                                    {c.label}
+                                  </span>
+                                </span>
+                                {c.description && (
+                                  <p className="mt-1 pl-7 text-xs text-gray-500">
+                                    {c.description}
+                                  </p>
+                                )}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                        <div className="flex gap-2">
+                          <input
+                            type="text"
+                            placeholder={
+                              mq.choices.length > 0
+                                ? "Or type a different answer..."
+                                : "What did the client say?"
+                            }
+                            value={metaDrafts[mq.meta_question_id] ?? ""}
+                            onChange={(e) =>
+                              setMetaDrafts((prev) => ({
+                                ...prev,
+                                [mq.meta_question_id]: e.target.value,
+                              }))
+                            }
+                            disabled={busy}
+                            className="flex-1 rounded-md border border-gray-300 px-3 py-1.5 text-sm placeholder:text-gray-400 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 disabled:opacity-50"
+                          />
+                          <button
+                            type="button"
+                            disabled={
+                              busy ||
+                              !(metaDrafts[mq.meta_question_id]?.trim())
+                            }
+                            onClick={() =>
+                              handleMetaAnswer(mq.meta_question_id)
+                            }
+                            className="rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                          >
+                            {busy ? "Saving..." : "Save"}
+                          </button>
+                        </div>
                       </div>
                     )}
                   </div>

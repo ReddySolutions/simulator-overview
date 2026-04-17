@@ -178,6 +178,66 @@ class TestConsolidator:
 
         assert len(result) == MAX_META_QUESTIONS
 
+    async def test_choices_are_parsed_when_present(self, monkeypatch):
+        _mock_settings(monkeypatch)
+        gaps = [_gap(f"g{i}") for i in range(MIN_GAPS_TO_CONSOLIDATE + 2)]
+        payload = {
+            "meta_questions": [
+                {
+                    "text": "Prefer video or PDF labels?",
+                    "rationale": "Label mismatches are most common.",
+                    "affected_gap_ids": ["g0", "g1", "g2"],
+                    "choices": [
+                        {"label": "Always video", "description": "Trust the observation"},
+                        {"label": "Always PDF"},
+                        {"label": "Case by case"},
+                    ],
+                }
+            ]
+        }
+
+        async def fake_llm(*_args, **_kwargs):
+            return json.dumps(payload)
+
+        with patch.object(consolidator, "_call_gemini", side_effect=fake_llm):
+            [mq] = await consolidate_gaps(gaps)
+
+        assert [c.label for c in mq.choices] == [
+            "Always video",
+            "Always PDF",
+            "Case by case",
+        ]
+        assert mq.choices[0].description == "Trust the observation"
+        assert mq.choices[1].description is None
+
+    async def test_malformed_choices_are_skipped(self, monkeypatch):
+        _mock_settings(monkeypatch)
+        gaps = [_gap(f"g{i}") for i in range(MIN_GAPS_TO_CONSOLIDATE + 2)]
+        payload = {
+            "meta_questions": [
+                {
+                    "text": "Question",
+                    "rationale": "r",
+                    "affected_gap_ids": ["g0"],
+                    "choices": [
+                        {"label": "Valid"},
+                        "not a dict",
+                        {"label": ""},  # empty label dropped
+                        {"description": "no label"},
+                    ],
+                }
+            ]
+        }
+
+        async def fake_llm(*_args, **_kwargs):
+            return json.dumps(payload)
+
+        with patch.object(consolidator, "_call_gemini", side_effect=fake_llm):
+            [mq] = await consolidate_gaps(gaps)
+
+        assert len(mq.choices) == 1
+        assert mq.choices[0].label == "Valid"
+
     async def test_non_json_response_returns_empty(self, monkeypatch):
         _mock_settings(monkeypatch)
         gaps = [_gap(f"g{i}") for i in range(MIN_GAPS_TO_CONSOLIDATE + 2)]

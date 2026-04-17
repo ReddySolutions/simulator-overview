@@ -3,6 +3,7 @@ import type {
   AnswerResponse,
   BestGuessResponse,
   CreateProjectResponse,
+  MetaAnswerResult,
   MetaQuestion,
   Project,
   ProjectSummary,
@@ -138,13 +139,14 @@ export function answerMetaQuestion(
   projectId: string,
   metaQuestionId: string,
   answer: string,
-): Promise<MetaQuestion> {
+  cascade = true,
+): Promise<MetaAnswerResult> {
   return request(
     `/projects/${projectId}/meta-questions/${metaQuestionId}/answer`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ answer }),
+      body: JSON.stringify({ answer, cascade }),
     },
   );
 }

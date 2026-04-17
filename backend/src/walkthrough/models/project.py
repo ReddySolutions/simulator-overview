@@ -53,6 +53,7 @@ class MetaQuestion(BaseModel):
     text: str
     rationale: str
     affected_gap_ids: list[str] = []
+    choices: list[Choice] = []
     answer: str | None = None
 
 
