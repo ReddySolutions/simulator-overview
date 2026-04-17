@@ -24,6 +24,5 @@ class Settings(BaseSettings):
     QA_BLOCK_ON_CRITICAL: bool = False
     NARRATIVE_FIDELITY_MODEL: str = "claude-haiku-4-5-20251001"
     CONTRADICTION_CRITIC_MODEL: str = "claude-sonnet-4-6"
-    NARRATIVE_CRITIC_MODEL: str = "claude-sonnet-4-6"
 
     model_config = {"env_prefix": "", "env_file": ".env"}
