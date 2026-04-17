@@ -367,9 +367,13 @@ class PhaseOrchestrator:
         phase to wait for user input via API endpoints.
         """
         from walkthrough.ai.tools.clarification import generate_questions
+        from walkthrough.ai.tools.consolidator import consolidate_gaps
 
         project.questions = await generate_questions(
             project.gaps, project.decision_trees,
+        )
+        project.meta_questions = await consolidate_gaps(
+            project.gaps, project.videos, project.pdfs,
         )
         project.updated_at = _now()
         await write_phase_artifact(

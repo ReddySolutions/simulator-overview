@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 import {
+  answerMetaQuestion,
   answerQuestion,
   getProject,
+  listMetaQuestions,
   listQuestions,
   markUnanswerable,
   questionsStatus,
@@ -11,6 +13,7 @@ import {
 } from "../api/client";
 import type {
   Choice,
+  MetaQuestion,
   QuestionResponse,
   QuestionsStatus,
   SourceRef,
@@ -79,6 +82,10 @@ export default function ClarificationPage() {
   const navigate = useNavigate();
 
   const [questions, setQuestions] = useState<QuestionResponse[]>([]);
+  const [metaQuestions, setMetaQuestions] = useState<MetaQuestion[]>([]);
+  const [metaDrafts, setMetaDrafts] = useState<Record<string, string>>({});
+  const [metaBusy, setMetaBusy] = useState<Record<string, boolean>>({});
+  const [metaCollapsed, setMetaCollapsed] = useState(false);
   const [status, setStatus] = useState<QuestionsStatus | null>(null);
   const [activeSeverity, setActiveSeverity] = useState<SeverityGroup | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
@@ -94,13 +101,15 @@ export default function ClarificationPage() {
   const fetchData = useCallback(async () => {
     if (!id) return;
     try {
-      const [qs, st, proj] = await Promise.all([
+      const [qs, st, proj, mqs] = await Promise.all([
         listQuestions(id),
         questionsStatus(id),
         getProject(id),
+        listMetaQuestions(id).catch(() => [] as MetaQuestion[]),
       ]);
       setQuestions(qs);
       setStatus(st);
+      setMetaQuestions(mqs);
       setIsReopened(proj.walkthrough_output !== null);
       // Pre-populate drafts with existing answers for resumption editing
       const existingDrafts: Record<string, string> = {};
@@ -199,6 +208,35 @@ export default function ClarificationPage() {
       }
     },
     [id],
+  );
+
+  const handleMetaAnswer = useCallback(
+    async (metaQuestionId: string) => {
+      if (!id) return;
+      const draft = metaDrafts[metaQuestionId]?.trim();
+      if (!draft) return;
+      setMetaBusy((prev) => ({ ...prev, [metaQuestionId]: true }));
+      try {
+        const updated = await answerMetaQuestion(id, metaQuestionId, draft);
+        setMetaQuestions((prev) =>
+          prev.map((m) =>
+            m.meta_question_id === metaQuestionId ? updated : m,
+          ),
+        );
+        setMetaDrafts((prev) => {
+          const next = { ...prev };
+          delete next[metaQuestionId];
+          return next;
+        });
+      } catch (err) {
+        setError(
+          err instanceof Error ? err.message : "Failed to save meta-answer",
+        );
+      } finally {
+        setMetaBusy((prev) => ({ ...prev, [metaQuestionId]: false }));
+      }
+    },
+    [id, metaDrafts],
   );
 
   const handleGenerate = useCallback(async () => {
@@ -334,6 +372,110 @@ export default function ClarificationPage() {
           <p className="mt-1 text-sm">
             The analysis found no gaps requiring clarification.
           </p>
+        </div>
+      )}
+
+      {/* Big Picture banner — consolidator's meta-questions for the client */}
+      {metaQuestions.length > 0 && (
+        <div className="mb-6 rounded-lg border border-indigo-200 bg-indigo-50/50 overflow-hidden">
+          <button
+            type="button"
+            onClick={() => setMetaCollapsed((v) => !v)}
+            className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left hover:bg-indigo-50 transition-colors"
+          >
+            <div className="flex items-center gap-2">
+              <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-indigo-600 text-white text-xs font-bold">
+                {metaQuestions.length}
+              </span>
+              <span className="text-sm font-semibold text-indigo-900">
+                Big Picture — ask the client these first
+              </span>
+              <span className="text-xs text-indigo-700">
+                (answering these may resolve many questions below)
+              </span>
+            </div>
+            <svg
+              className={`h-4 w-4 text-indigo-600 transition-transform ${
+                metaCollapsed ? "" : "rotate-180"
+              }`}
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M19 9l-7 7-7-7"
+              />
+            </svg>
+          </button>
+
+          {!metaCollapsed && (
+            <div className="border-t border-indigo-200 bg-white px-4 py-3 space-y-3">
+              {metaQuestions.map((mq) => {
+                const answered = mq.answer !== null;
+                const busy = metaBusy[mq.meta_question_id] ?? false;
+                return (
+                  <div
+                    key={mq.meta_question_id}
+                    className="rounded-md border border-indigo-100 p-3"
+                  >
+                    <p className="text-sm font-medium text-gray-900">
+                      {mq.text}
+                    </p>
+                    {mq.rationale && (
+                      <p className="mt-1 text-xs text-gray-500 italic">
+                        {mq.rationale}
+                      </p>
+                    )}
+                    <p className="mt-1 text-xs text-indigo-700">
+                      Covers {mq.affected_gap_ids.length} individual question
+                      {mq.affected_gap_ids.length === 1 ? "" : "s"}
+                    </p>
+
+                    {answered ? (
+                      <div className="mt-2 rounded bg-green-50 border border-green-100 px-3 py-2">
+                        <p className="text-xs font-semibold text-green-700">
+                          Client answer
+                        </p>
+                        <p className="text-sm text-green-800">{mq.answer}</p>
+                      </div>
+                    ) : (
+                      <div className="mt-2 flex gap-2">
+                        <input
+                          type="text"
+                          placeholder="What did the client say?"
+                          value={metaDrafts[mq.meta_question_id] ?? ""}
+                          onChange={(e) =>
+                            setMetaDrafts((prev) => ({
+                              ...prev,
+                              [mq.meta_question_id]: e.target.value,
+                            }))
+                          }
+                          disabled={busy}
+                          className="flex-1 rounded-md border border-gray-300 px-3 py-1.5 text-sm placeholder:text-gray-400 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 disabled:opacity-50"
+                        />
+                        <button
+                          type="button"
+                          disabled={
+                            busy ||
+                            !(metaDrafts[mq.meta_question_id]?.trim())
+                          }
+                          onClick={() =>
+                            handleMetaAnswer(mq.meta_question_id)
+                          }
+                          className="rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                        >
+                          {busy ? "Saving..." : "Save"}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 

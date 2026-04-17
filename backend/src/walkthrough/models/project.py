@@ -40,6 +40,22 @@ class ClarificationQuestion(BaseModel):
     answer: str | None = None
 
 
+class MetaQuestion(BaseModel):
+    """An umbrella question whose answer resolves many individual gaps.
+
+    Produced by the consolidator agent. When the client provides a single
+    piece of context (e.g. a missing video of the refund flow), the set of
+    affected gap_ids can be collapsed — either auto-resolved with the
+    meta-answer or re-analyzed on the next pipeline run.
+    """
+
+    meta_question_id: str
+    text: str
+    rationale: str
+    affected_gap_ids: list[str] = []
+    answer: str | None = None
+
+
 class Project(BaseModel):
     project_id: str
     name: str
@@ -56,6 +72,7 @@ class Project(BaseModel):
     decision_trees: list[DecisionTree]
     gaps: list[Gap]
     questions: list[ClarificationQuestion]
+    meta_questions: list[MetaQuestion] = []
     walkthrough_output: dict[str, Any] | None = None
     created_at: datetime
     updated_at: datetime

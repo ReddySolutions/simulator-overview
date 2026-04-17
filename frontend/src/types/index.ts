@@ -264,6 +264,14 @@ export interface QuestionsStatus {
   can_generate: boolean;
 }
 
+export interface MetaQuestion {
+  meta_question_id: string;
+  text: string;
+  rationale: string;
+  affected_gap_ids: string[];
+  answer: string | null;
+}
+
 export interface SessionState {
   project_id: string;
   phase: string;

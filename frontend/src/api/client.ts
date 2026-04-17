@@ -2,6 +2,7 @@ import type {
   AnalyzeResponse,
   AnswerResponse,
   CreateProjectResponse,
+  MetaQuestion,
   Project,
   ProjectSummary,
   QuestionsStatus,
@@ -114,6 +115,27 @@ export function markUnanswerable(
 
 export function questionsStatus(projectId: string): Promise<QuestionsStatus> {
   return request(`/projects/${projectId}/questions/status`);
+}
+
+export function listMetaQuestions(
+  projectId: string,
+): Promise<MetaQuestion[]> {
+  return request(`/projects/${projectId}/meta-questions`);
+}
+
+export function answerMetaQuestion(
+  projectId: string,
+  metaQuestionId: string,
+  answer: string,
+): Promise<MetaQuestion> {
+  return request(
+    `/projects/${projectId}/meta-questions/${metaQuestionId}/answer`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ answer }),
+    },
+  );
 }
 
 export function triggerGeneration(

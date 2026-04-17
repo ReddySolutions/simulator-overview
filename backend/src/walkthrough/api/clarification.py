@@ -63,6 +63,18 @@ class QuestionsStatus(BaseModel):
     can_generate: bool
 
 
+class MetaQuestionResponse(BaseModel):
+    meta_question_id: str
+    text: str
+    rationale: str
+    affected_gap_ids: list[str]
+    answer: str | None
+
+
+class MetaAnswerRequest(BaseModel):
+    answer: str
+
+
 class GenerateResponse(BaseModel):
     project_id: str
     message: str
@@ -264,6 +276,77 @@ async def questions_status(project_id: str) -> QuestionsStatus:
         unanswerable=unanswerable,
         remaining_critical=remaining_critical,
         can_generate=can_generate,
+    )
+
+
+@router.get(
+    "/{project_id}/meta-questions",
+    response_model=list[MetaQuestionResponse],
+)
+async def list_meta_questions(project_id: str) -> list[MetaQuestionResponse]:
+    """Return the consolidator's umbrella questions for the client.
+
+    Each meta-question carries the ids of the individual gaps it
+    addresses, so the UI can show 'answering this resolves N questions'.
+    """
+    fs = _get_firestore()
+    project = await fs.load_project(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    return [
+        MetaQuestionResponse(
+            meta_question_id=mq.meta_question_id,
+            text=mq.text,
+            rationale=mq.rationale,
+            affected_gap_ids=mq.affected_gap_ids,
+            answer=mq.answer,
+        )
+        for mq in project.meta_questions
+    ]
+
+
+@router.post(
+    "/{project_id}/meta-questions/{meta_question_id}/answer",
+    response_model=MetaQuestionResponse,
+)
+async def answer_meta_question(
+    project_id: str,
+    meta_question_id: str,
+    body: MetaAnswerRequest,
+) -> MetaQuestionResponse:
+    """Record an answer to a meta-question.
+
+    The answer is stored on the meta-question itself. Individual gaps are
+    NOT auto-resolved — the next analysis pass (after the client supplies
+    the missing input) will re-run contradiction detection and drop gaps
+    that no longer apply.
+    """
+    fs = _get_firestore()
+    project = await fs.load_project(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    target = next(
+        (
+            m
+            for m in project.meta_questions
+            if m.meta_question_id == meta_question_id
+        ),
+        None,
+    )
+    if target is None:
+        raise HTTPException(status_code=404, detail="Meta-question not found")
+
+    target.answer = body.answer
+    await fs.save_project(project)
+
+    return MetaQuestionResponse(
+        meta_question_id=target.meta_question_id,
+        text=target.text,
+        rationale=target.rationale,
+        affected_gap_ids=target.affected_gap_ids,
+        answer=target.answer,
     )
 
 

@@ -1,5 +1,11 @@
 from walkthrough.models.pdf import PDFExtraction, PDFImage, PDFSection, PDFTable
-from walkthrough.models.project import Choice, ClarificationQuestion, Gap, Project
+from walkthrough.models.project import (
+    Choice,
+    ClarificationQuestion,
+    Gap,
+    MetaQuestion,
+    Project,
+)
 from walkthrough.models.qa import QAReport, ValidatorFinding, ValidatorResult
 from walkthrough.models.video import (
     AudioSegment,
@@ -24,6 +30,7 @@ __all__ = [
     "DecisionTree",
     "Gap",
     "Keyframe",
+    "MetaQuestion",
     "Narrative",
     "PDFExtraction",
     "PDFImage",
