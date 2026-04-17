@@ -26,8 +26,4 @@ class Settings(BaseSettings):
     CONTRADICTION_CRITIC_MODEL: str = "claude-sonnet-4-6"
     NARRATIVE_CRITIC_MODEL: str = "claude-sonnet-4-6"
 
-    # Self-critique (v1 -> surgical v2) pass; default off
-    ENABLE_SELF_CRITIQUE: bool = False
-    SELF_CRITIQUE_MODEL: str = "claude-sonnet-4-6"
-
     model_config = {"env_prefix": "", "env_file": ".env"}
